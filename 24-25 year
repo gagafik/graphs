@@ -1,0 +1,230 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+
+# Настройка страницы
+st.set_page_config(
+    page_title="📊 Дашборд успеваемости",
+    page_icon="📊",
+    layout="wide"
+)
+
+@st.cache_data
+def load_data():
+    """Загружает и кэширует данные"""
+    df = pd.read_excel('Marks 2425.xlsx', sheet_name='Average year, no teacher')
+    return df
+
+def main():
+    st.title("📊 Дашборд успеваемости школы")
+    st.markdown("---")
+    
+    # Загрузка данных
+    df = load_data()
+    
+    # Sidebar с фильтрами
+    st.sidebar.header("🔧 Фильтры")
+    
+    # Фильтр по классам
+    classes = ['Все классы'] + sorted(df['Class'].unique().tolist())
+    selected_class = st.sidebar.selectbox("Выберите класс:", classes)
+    
+    # Фильтр по предметам
+    subjects = ['Все предметы'] + sorted(df['Subject'].unique().tolist())
+    selected_subject = st.sidebar.selectbox("Выберите предмет:", subjects)
+    
+    # Фильтр по диапазону оценок
+    min_grade, max_grade = st.sidebar.slider(
+        "Диапазон оценок:",
+        min_value=int(df['Average'].min()),
+        max_value=int(df['Average'].max()),
+        value=(int(df['Average'].min()), int(df['Average'].max()))
+    )
+    
+    # Количество топ предметов для отображения
+    top_n = st.sidebar.slider("Количество топ предметов:", 5, 25, 15)
+    
+    # Применение фильтров
+    filtered_df = df.copy()
+    
+    if selected_class != 'Все классы':
+        filtered_df = filtered_df[filtered_df['Class'] == selected_class]
+    
+    if selected_subject != 'Все предметы':
+        filtered_df = filtered_df[filtered_df['Subject'] == selected_subject]
+    
+    filtered_df = filtered_df[
+        (filtered_df['Average'] >= min_grade) & 
+        (filtered_df['Average'] <= max_grade)
+    ]
+    
+    # Основная статистика
+    if len(filtered_df) > 0:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="👥 Студентов",
+                value=filtered_df['Student'].nunique(),
+                delta=f"из {df['Student'].nunique()}"
+            )
+        
+        with col2:
+            st.metric(
+                label="🏫 Классов",
+                value=filtered_df['Class'].nunique(),
+                delta=f"из {df['Class'].nunique()}"
+            )
+        
+        with col3:
+            st.metric(
+                label="📚 Предметов",
+                value=filtered_df['Subject'].nunique(),
+                delta=f"из {df['Subject'].nunique()}"
+            )
+        
+        with col4:
+            avg_score = filtered_df['Average'].mean()
+            total_avg = df['Average'].mean()
+            delta = avg_score - total_avg
+            st.metric(
+                label="📈 Средний балл",
+                value=f"{avg_score:.1f}",
+                delta=f"{delta:+.1f}"
+            )
+        
+        st.markdown("---")
+        
+        # Графики
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Рейтинг предметов
+            st.subheader(f"🏆 Топ-{top_n} предметов")
+            subject_avg = filtered_df.groupby('Subject')['Average'].agg(['mean', 'count']).reset_index()
+            subject_avg['mean'] = subject_avg['mean'].round(1)
+            subject_avg = subject_avg.sort_values('mean', ascending=False).head(top_n)
+            
+            fig_subjects = px.bar(
+                subject_avg,
+                x='mean',
+                y='Subject',
+                orientation='h',
+                color='mean',
+                color_continuous_scale='Viridis',
+                labels={'mean': 'Средняя оценка', 'Subject': 'Предмет'}
+            )
+            fig_subjects.update_layout(
+                height=400,
+                yaxis={'categoryorder': 'total ascending'},
+                showlegend=False
+            )
+            st.plotly_chart(fig_subjects, use_container_width=True)
+        
+        with col2:
+            # Распределение оценок
+            st.subheader("📊 Распределение оценок")
+            fig_dist = px.histogram(
+                filtered_df,
+                x='Average',
+                nbins=20,
+                color_discrete_sequence=['#636EFA']
+            )
+            fig_dist.add_vline(
+                x=filtered_df['Average'].mean(),
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"Среднее: {filtered_df['Average'].mean():.1f}"
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
+        
+        # Сравнение классов
+        st.subheader("🏫 Сравнение классов")
+        class_avg = filtered_df.groupby('Class')['Average'].agg(['mean', 'count']).reset_index()
+        class_avg['mean'] = class_avg['mean'].round(1)
+        
+        fig_classes = px.scatter(
+            class_avg,
+            x='Class',
+            y='mean',
+            size='count',
+            color='mean',
+            color_continuous_scale='RdYlGn',
+            labels={'mean': 'Средняя оценка', 'count': 'Количество оценок'},
+            hover_data=['count']
+        )
+        fig_classes.update_layout(height=400)
+        st.plotly_chart(fig_classes, use_container_width=True)
+        
+        # Box plot по классам
+        if len(filtered_df['Class'].unique()) > 1:
+            st.subheader("📈 Анализ распределения по классам")
+            fig_box = px.box(
+                filtered_df,
+                x='Class',
+                y='Average',
+                labels={'Average': 'Оценка', 'Class': 'Класс'}
+            )
+            fig_box.update_layout(height=400)
+            st.plotly_chart(fig_box, use_container_width=True)
+        
+        # Тепловая карта (только если данных достаточно)
+        if len(filtered_df) > 50 and len(filtered_df['Class'].unique()) > 2 and len(filtered_df['Subject'].unique()) > 2:
+            st.subheader("🔥 Тепловая карта: Классы × Предметы")
+            
+            # Создаем сводную таблицу для тепловой карты
+            heatmap_data = filtered_df.pivot_table(
+                values='Average',
+                index='Class',
+                columns='Subject',
+                aggfunc='mean'
+            )
+            
+            # Ограничиваем количество предметов для читаемости
+            if heatmap_data.shape[1] > 15:
+                top_subjects_for_heatmap = subject_avg.head(15)['Subject'].tolist()
+                heatmap_data = heatmap_data[top_subjects_for_heatmap]
+            
+            fig_heatmap = px.imshow(
+                heatmap_data,
+                color_continuous_scale='RdYlGn',
+                aspect="auto",
+                labels=dict(color="Средняя оценка")
+            )
+            fig_heatmap.update_layout(height=500)
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+        
+        # Детальная таблица
+        with st.expander("📋 Детальные данные"):
+            st.dataframe(
+                filtered_df.sort_values('Average', ascending=False),
+                use_container_width=True
+            )
+            
+            # Кнопка для скачивания
+            csv = filtered_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Скачать отфильтрованные данные (CSV)",
+                data=csv,
+                file_name='filtered_grades.csv',
+                mime='text/csv'
+            )
+    
+    else:
+        st.warning("⚠️ Нет данных для выбранных фильтров!")
+    
+    # Дополнительная информация
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("### 📈 Статистика")
+        if len(filtered_df) > 0:
+            st.write(f"**Записей:** {len(filtered_df):,}")
+            st.write(f"**Медиана:** {filtered_df['Average'].median():.1f}")
+            st.write(f"**Станд. отклонение:** {filtered_df['Average'].std():.1f}")
+            st.write(f"**Мин. оценка:** {filtered_df['Average'].min():.1f}")
+            st.write(f"**Макс. оценка:** {filtered_df['Average'].max():.1f}")
+
+if __name__ == "__main__":
+    main()
