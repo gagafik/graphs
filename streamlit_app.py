@@ -89,10 +89,10 @@ def load_data():
     """Загружает и кэширует данные"""
     try:
         possible_files = [
-            'Marks 2425.xlsx',
-            'marks_2425.xlsx', 
-            'data/Marks 2425.xlsx',
-            'data/marks_2425.xlsx'
+            'Marks 2526.xlsx',
+            'marks_2526.xlsx', 
+            'data/Marks 2526.xlsx',
+            'data/marks_2526.xlsx'
         ]
         
         df = None
