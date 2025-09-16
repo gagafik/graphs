@@ -30,7 +30,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": [],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 10
         },
         "2-е параллель": {
@@ -39,7 +38,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["2"],
             "subjects": [],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 10
         },
         "Старшие классы (10-11)": {
@@ -48,7 +46,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["10", "11"],
             "subjects": [],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 15
         },
         "Средние классы (7-9)": {
@@ -57,7 +54,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["7", "8", "9"],
             "subjects": [],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 12
         },
         "Точные науки": {
@@ -66,7 +62,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": ["Math", "Physics", "Chemistry", "CS", "Calc", "Further Math"],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 6
         },
         "Языки": {
@@ -75,7 +70,6 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": ["English", "ESL", "Rus", "Kaz", "RusLit", "KazLit"],
             "grade_range": [0, 100],
-            "stats_grade_range": [0, 100],
             "top_n": 8
         }
     }
@@ -87,13 +81,12 @@ if 'current_filters' not in st.session_state:
         "parallels": [],
         "subjects": [],
         "grade_range": [0, 100],
-        "stats_grade_range": [0, 100],
         "top_n": 10
     }
 
 @st.cache_data
 def load_data():
-    """Загружает и кэширует данные"""
+    """Загружает и кеширует данные"""
     try:
         possible_files = [
             'Marks 2526.xlsx',
@@ -349,37 +342,20 @@ def render_filter_sidebar(df):
         help="Оставьте пустым для выбора всех предметов"
     )
     
-    # Слайдер для диапазона оценок (основной фильтр)
+    # Слайдер для диапазона оценок
     min_possible = int(df['Average'].min())
     max_possible = int(df['Average'].max())
     current_range = current_filters.get('grade_range', [min_possible, max_possible])
     
     grade_range = st.sidebar.slider(
-        "📊 Диапазон оценок (фильтр данных):",
+        "📊 Диапазон оценок:",
         min_value=min_possible,
         max_value=max_possible,
         value=(
             max(min_possible, current_range[0]), 
             min(max_possible, current_range[1])
         ),
-        help="Фильтрует данные по указанному диапазону оценок"
-    )
-    
-    # Новый слайдер для статистики
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📈 Статистика отображаемых данных")
-    
-    current_stats_range = current_filters.get('stats_grade_range', [min_possible, max_possible])
-    
-    stats_grade_range = st.sidebar.slider(
-        "📊 Диапазон для статистики:",
-        min_value=min_possible,
-        max_value=max_possible,
-        value=(
-            max(min_possible, current_stats_range[0]), 
-            min(max_possible, current_stats_range[1])
-        ),
-        help="Показывает статистику только для оценок в указанном диапазоне"
+        help="Выберите минимальную и максимальную оценку"
     )
     
     # Количество топ предметов
@@ -398,7 +374,6 @@ def render_filter_sidebar(df):
         'parallels': selected_parallels,
         'subjects': selected_subjects,
         'grade_range': list(grade_range),
-        'stats_grade_range': list(stats_grade_range),
         'top_n': top_n
     }
     
@@ -410,12 +385,11 @@ def render_filter_sidebar(df):
             'parallels': [],
             'subjects': [],
             'grade_range': [min_possible, max_possible],
-            'stats_grade_range': [min_possible, max_possible],
             'top_n': 10
         }
         st.rerun()
     
-    return selected_classes, selected_subjects, grade_range, stats_grade_range, top_n, parallel_mode, selected_parallels
+    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels
 
 def apply_filters(df, selected_classes, selected_subjects, grade_range):
     """Применяет фильтры к данным"""
@@ -437,10 +411,20 @@ def apply_filters(df, selected_classes, selected_subjects, grade_range):
     
     return filtered_df
 
-def render_filter_summary(selected_classes, selected_subjects, grade_range, stats_grade_range, original_df, filtered_df, parallel_mode, selected_parallels):
+def apply_manual_grade_filter(df, min_grade, max_grade):
+    """Применяет ручной фильтр по диапазону оценок"""
+    if min_grade is not None and max_grade is not None:
+        return df[(df['Average'] >= min_grade) & (df['Average'] <= max_grade)]
+    elif min_grade is not None:
+        return df[df['Average'] >= min_grade]
+    elif max_grade is not None:
+        return df[df['Average'] <= max_grade]
+    return df
+
+def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels):
     """Отображает сводку примененных фильтров"""
     with st.expander("🔍 Примененные фильтры", expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if parallel_mode and selected_parallels:
@@ -468,12 +452,8 @@ def render_filter_summary(selected_classes, selected_subjects, grade_range, stat
                 st.write("• Все предметы")
         
         with col3:
-            st.write("**📊 Диапазон оценок (фильтр):**")
+            st.write("**📊 Диапазон оценок:**")
             st.write(f"• {grade_range[0]} - {grade_range[1]}")
-        
-        with col4:
-            st.write("**📈 Диапазон для статистики:**")
-            st.write(f"• {stats_grade_range[0]} - {stats_grade_range[1]}")
         
         # Статистика фильтрации
         original_count = len(original_df)
@@ -482,19 +462,9 @@ def render_filter_summary(selected_classes, selected_subjects, grade_range, stat
         
         st.info(f"📈 Отображено {filtered_count:,} из {original_count:,} записей ({percentage:.1f}%)")
 
-def create_subject_ranking_charts(filtered_df, stats_grade_range, top_n):
+def create_subject_ranking_charts(filtered_df, top_n):
     """Создает графики рейтинга лучших и худших предметов"""
-    # Применяем фильтр статистики
-    stats_df = filtered_df[
-        (filtered_df['Average'] >= stats_grade_range[0]) & 
-        (filtered_df['Average'] <= stats_grade_range[1])
-    ]
-    
-    if len(stats_df) == 0:
-        st.warning("⚠️ Нет данных для выбранного диапазона статистики!")
-        return None
-    
-    subject_avg = stats_df.groupby('Subject')['Average'].agg(['mean', 'count']).reset_index()
+    subject_avg = filtered_df.groupby('Subject')['Average'].agg(['mean', 'count']).reset_index()
     subject_avg['mean'] = subject_avg['mean'].round(1)
     subject_avg = subject_avg.sort_values('mean', ascending=False)
     
@@ -585,66 +555,53 @@ def main():
         return
     
     # Отображение фильтров и получение выбранных значений
-    selected_classes, selected_subjects, grade_range, stats_grade_range, top_n, parallel_mode, selected_parallels = render_filter_sidebar(df)
+    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels = render_filter_sidebar(df)
     
     # Применение фильтров
     filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range)
     
     # Отображение сводки фильтров
-    render_filter_summary(selected_classes, selected_subjects, grade_range, stats_grade_range, df, filtered_df, parallel_mode, selected_parallels)
+    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels)
     
     # Основная статистика
     if len(filtered_df) > 0:
-        # Применяем фильтр статистики для метрик
-        stats_df = filtered_df[
-            (filtered_df['Average'] >= stats_grade_range[0]) & 
-            (filtered_df['Average'] <= stats_grade_range[1])
-        ]
-        
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric(
                 label="👥 Студентов",
-                value=stats_df['Student'].nunique(),
-                delta=f"{stats_df['Student'].nunique() - df['Student'].nunique():+d}"
+                value=filtered_df['Student'].nunique(),
+                delta=f"{filtered_df['Student'].nunique() - df['Student'].nunique():+d}"
             )
         
         with col2:
             st.metric(
                 label="🏫 Классов",
-                value=stats_df['Class'].nunique(),
-                delta=f"{stats_df['Class'].nunique() - df['Class'].nunique():+d}"
+                value=filtered_df['Class'].nunique(),
+                delta=f"{filtered_df['Class'].nunique() - df['Class'].nunique():+d}"
             )
         
         with col3:
             st.metric(
                 label="📚 Предметов",
-                value=stats_df['Subject'].nunique(),
-                delta=f"{stats_df['Subject'].nunique() - df['Subject'].nunique():+d}"
+                value=filtered_df['Subject'].nunique(),
+                delta=f"{filtered_df['Subject'].nunique() - df['Subject'].nunique():+d}"
             )
         
         with col4:
-            if len(stats_df) > 0:
-                avg_score = stats_df['Average'].mean()
-                total_avg = df['Average'].mean()
-                delta = avg_score - total_avg
-                st.metric(
-                    label="📈 Средний балл",
-                    value=f"{avg_score:.1f}",
-                    delta=f"{delta:+.1f}"
-                )
-            else:
-                st.metric(
-                    label="📈 Средний балл",
-                    value="Нет данных",
-                    delta=None
-                )
+            avg_score = filtered_df['Average'].mean()
+            total_avg = df['Average'].mean()
+            delta = avg_score - total_avg
+            st.metric(
+                label="📈 Средний балл",
+                value=f"{avg_score:.1f}",
+                delta=f"{delta:+.1f}"
+            )
         
         st.markdown("---")
         
         # Рейтинг предметов (лучшие и худшие)
-        subject_avg = create_subject_ranking_charts(filtered_df, stats_grade_range, top_n)
+        subject_avg = create_subject_ranking_charts(filtered_df, top_n)
         
         st.markdown("---")
         
@@ -652,74 +609,38 @@ def main():
         col1, col2 = st.columns(2)
         
         with col1:
-            # Распределение оценок (используем stats_df)
+            # Распределение оценок
             st.subheader("📊 Распределение оценок")
-            if len(stats_df) > 0:
-                if PLOTLY_AVAILABLE:
-                    fig_dist = create_plotly_chart(
-                        'histogram',
-                        stats_df,
-                        x='Average',
-                        nbins=20,
-                        color_discrete_sequence=['#636EFA']
+            if PLOTLY_AVAILABLE:
+                fig_dist = create_plotly_chart(
+                    'histogram',
+                    filtered_df,
+                    x='Average',
+                    nbins=20,
+                    color_discrete_sequence=['#636EFA']
+                )
+                if fig_dist:
+                    fig_dist.add_vline(
+                        x=filtered_df['Average'].mean(),
+                        line_dash="dash",
+                        line_color="red",
+                        annotation_text=f"Среднее: {filtered_df['Average'].mean():.1f}"
                     )
-                    if fig_dist:
-                        fig_dist.add_vline(
-                            x=stats_df['Average'].mean(),
-                            line_dash="dash",
-                            line_color="red",
-                            annotation_text=f"Среднее: {stats_df['Average'].mean():.1f}"
-                        )
-                        st.plotly_chart(fig_dist, use_container_width=True)
-                else:
-                    st.write("Статистика распределения:")
-                    st.write(stats_df['Average'].describe())
+                    st.plotly_chart(fig_dist, use_container_width=True)
             else:
-                st.info("Нет данных для выбранного диапазона статистики")
+                st.write("Статистика распределения:")
+                st.write(filtered_df['Average'].describe())
         
         with col2:
-            # Категории успеваемости (используем stats_df)
-            st.subheader("📈 Категории успеваемости")
-            
-            if len(stats_df) > 0:
-                # Обновленные категории
-                bins = [0, 40, 65, 85, 100]
-                labels = ['Неуд [0;40)', 'Удовл [40;65)', 'Хорошо [65;85)', 'Отлично [85;100]']
-                stats_df_copy = stats_df.copy()
-                stats_df_copy['Grade_Category'] = pd.cut(
-                    stats_df_copy['Average'], 
-                    bins=bins, 
-                    labels=labels, 
-                    include_lowest=True,
-                    right=False  # [a;b) интервалы
-                )
+            # Сравнение параллелей (если применен фильтр по параллелям)
+            if parallel_mode and selected_parallels and len(selected_parallels) > 1:
+                st.subheader("📢 Сравнение параллелей")
                 
-                category_counts = stats_df_copy['Grade_Category'].value_counts()
+                # Добавляем колонку с параллелью для анализа
+                filtered_df_with_parallel = filtered_df.copy()
+                filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
                 
-                if PLOTLY_AVAILABLE and len(category_counts) > 0:
-                    fig_pie = go.Figure(data=[go.Pie(
-                        labels=category_counts.index,
-                        values=category_counts.values,
-                        hole=0.3,
-                        marker_colors=['#ff4444', '#ff8800', '#ffdd00', '#44dd44']
-                    )])
-                    fig_pie.update_layout(height=400)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                else:
-                    st.dataframe(category_counts.reset_index().rename(columns={'index': 'Категория', 'Grade_Category': 'Количество'}))
-            else:
-                st.info("Нет данных для выбранного диапазона статистики")
-
-        # Сравнение параллелей (если применен фильтр по параллелям)
-        if parallel_mode and selected_parallels and len(selected_parallels) > 1:
-            st.subheader("📢 Сравнение параллелей")
-            
-            # Добавляем колонку с параллелью для анализа
-            stats_df_with_parallel = stats_df.copy() if len(stats_df) > 0 else pd.DataFrame()
-            if len(stats_df_with_parallel) > 0:
-                stats_df_with_parallel['Parallel'] = stats_df_with_parallel['Class'].apply(extract_parallel_from_class)
-                
-                parallel_stats = stats_df_with_parallel.groupby('Parallel')['Average'].agg(['mean', 'count']).reset_index()
+                parallel_stats = filtered_df_with_parallel.groupby('Parallel')['Average'].agg(['mean', 'count']).reset_index()
                 parallel_stats['mean'] = parallel_stats['mean'].round(1)
                 
                 if PLOTLY_AVAILABLE:
@@ -738,12 +659,34 @@ def main():
                         st.plotly_chart(fig_parallels, use_container_width=True)
                 else:
                     st.dataframe(parallel_stats.rename(columns={'Parallel': 'Параллель', 'mean': 'Средняя оценка'}))
+            else:
+                # Статистика по категориям оценок - ОБНОВЛЕННЫЕ КАТЕГОРИИ
+                st.subheader("📈 Категории успеваемости")
+                
+                # Создаем категории с новыми диапазонами
+                bins = [0, 40, 65, 85, 100]
+                labels = ['Неуд. (0-39)', 'Удовл. (40-64)', 'Хорошо (65-84)', 'Отлично (85-100)']
+                filtered_df['Grade_Category'] = pd.cut(filtered_df['Average'], bins=bins, labels=labels, include_lowest=True)
+                
+                category_counts = filtered_df['Grade_Category'].value_counts()
+                
+                if PLOTLY_AVAILABLE and len(category_counts) > 0:
+                    fig_pie = go.Figure(data=[go.Pie(
+                        labels=category_counts.index,
+                        values=category_counts.values,
+                        hole=0.3,
+                        marker_colors=['#ff4444', '#ff8800', '#88dd00', '#44dd44']
+                    )])
+                    fig_pie.update_layout(height=400)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.dataframe(category_counts.reset_index().rename(columns={'index': 'Категория', 'Grade_Category': 'Количество'}))
         
         # Сравнение классов
-        if len(stats_df) > 0 and stats_df['Class'].nunique() > 1:
+        if len(filtered_df['Class'].unique()) > 1:
             st.subheader("🏫 Анализ по классам")
             
-            class_avg = stats_df.groupby('Class')['Average'].agg(['mean', 'count']).reset_index()
+            class_avg = filtered_df.groupby('Class')['Average'].agg(['mean', 'count']).reset_index()
             class_avg['mean'] = class_avg['mean'].round(1)
             class_avg = class_avg.sort_values('mean', ascending=False)
             
@@ -781,7 +724,7 @@ def main():
                     st.plotly_chart(fig_classes, use_container_width=True)
         
         # Box plot анализ
-        if len(stats_df) > 50:  # Показываем только если достаточно данных
+        if len(filtered_df) > 50:  # Показываем только если достаточно данных
             st.subheader("📈 Детальный анализ распределения")
             
             analysis_type = st.radio(
@@ -793,8 +736,8 @@ def main():
             if PLOTLY_AVAILABLE:
                 if analysis_type == "По классам":
                     # Ограничиваем количество классов для читаемости
-                    top_classes_for_box = stats_df.groupby('Class')['Average'].count().nlargest(15).index
-                    df_for_box = stats_df[stats_df['Class'].isin(top_classes_for_box)]
+                    top_classes_for_box = filtered_df.groupby('Class')['Average'].count().nlargest(15).index
+                    df_for_box = filtered_df[filtered_df['Class'].isin(top_classes_for_box)]
                     
                     fig_box = create_plotly_chart(
                         'box',
@@ -805,8 +748,8 @@ def main():
                     )
                 elif analysis_type == "По предметам":
                     # Ограничиваем количество предметов для читаемости
-                    top_subjects_for_box = stats_df.groupby('Subject')['Average'].count().nlargest(12).index
-                    df_for_box = stats_df[stats_df['Subject'].isin(top_subjects_for_box)]
+                    top_subjects_for_box = filtered_df.groupby('Subject')['Average'].count().nlargest(12).index
+                    df_for_box = filtered_df[filtered_df['Subject'].isin(top_subjects_for_box)]
                     
                     fig_box = create_plotly_chart(
                         'box',
@@ -816,12 +759,12 @@ def main():
                         labels={'Average': 'Оценка', 'Subject': 'Предмет'}
                     )
                 else:  # По параллелям
-                    stats_df_with_parallel = stats_df.copy()
-                    stats_df_with_parallel['Parallel'] = stats_df_with_parallel['Class'].apply(extract_parallel_from_class)
+                    filtered_df_with_parallel = filtered_df.copy()
+                    filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
                     
                     fig_box = create_plotly_chart(
                         'box',
-                        stats_df_with_parallel,
+                        filtered_df_with_parallel,
                         x='Parallel',
                         y='Average',
                         labels={'Average': 'Оценка', 'Parallel': 'Параллель'}
@@ -834,17 +777,17 @@ def main():
             else:
                 # Fallback: статистика
                 if analysis_type == "По классам":
-                    box_stats = stats_df.groupby('Class')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
+                    box_stats = filtered_df.groupby('Class')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
                 elif analysis_type == "По предметам":
-                    box_stats = stats_df.groupby('Subject')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
+                    box_stats = filtered_df.groupby('Subject')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
                 else:
-                    stats_df_with_parallel = stats_df.copy()
-                    stats_df_with_parallel['Parallel'] = stats_df_with_parallel['Class'].apply(extract_parallel_from_class)
-                    box_stats = stats_df_with_parallel.groupby('Parallel')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
+                    filtered_df_with_parallel = filtered_df.copy()
+                    filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
+                    box_stats = filtered_df_with_parallel.groupby('Parallel')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
                 
                 st.dataframe(box_stats, use_container_width=True)
         
-        # Детальная таблица с улучшенными опциями
+        # Детальная таблица с улучшенными опциями - ДОБАВЛЯЕМ РУЧНОЙ ФИЛЬТР ОЦЕНОК
         with st.expander("📋 Детальные данные и экспорт"):
             # Дополнительные опции для таблицы
             col1, col2, col3, col4 = st.columns(4)
@@ -873,12 +816,38 @@ def main():
             with col4:
                 show_stats = st.checkbox("Показать статистику", value=True)
             
-            # Используем stats_df для отображения таблицы
-            display_df_source = stats_df if len(stats_df) > 0 else filtered_df
+            # НОВЫЙ РУЧНОЙ ФИЛЬТР ПО ДИАПАЗОНУ ОЦЕНОК
+            st.markdown("**🎯 Дополнительный фильтр по диапазону оценок:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                manual_min_grade = st.number_input(
+                    "Минимальная оценка:",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=None,
+                    step=0.1,
+                    placeholder="Например, 75.0",
+                    help="Оставьте пустым для отключения фильтра"
+                )
+            
+            with col2:
+                manual_max_grade = st.number_input(
+                    "Максимальная оценка:",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=None,
+                    step=0.1,
+                    placeholder="Например, 95.0",
+                    help="Оставьте пустым для отключения фильтра"
+                )
+            
+            # Применяем ручной фильтр оценок к уже отфильтрованным данным
+            display_filtered_df = apply_manual_grade_filter(filtered_df, manual_min_grade, manual_max_grade)
             
             # Применяем сортировку
             ascending = sort_order == "По возрастанию"
-            sorted_df = display_df_source.sort_values(sort_by, ascending=ascending)
+            sorted_df = display_filtered_df.sort_values(sort_by, ascending=ascending)
             
             # Ограничиваем количество строк
             if show_rows != "Все":
@@ -886,10 +855,10 @@ def main():
             else:
                 display_df = sorted_df
             
-            if show_stats and len(display_df) > 0:
+            if show_stats:
                 # Статистика по отображаемым данным
                 st.markdown("**📊 Статистика отображаемых данных:**")
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
                     st.metric("Записей", len(display_df))
@@ -899,50 +868,59 @@ def main():
                     st.metric("Медиана", f"{display_df['Average'].median():.1f}")
                 with col4:
                     st.metric("Станд. отклонение", f"{display_df['Average'].std():.1f}")
+                with col5:
+                    st.metric("Диапазон", f"{display_df['Average'].min():.1f} - {display_df['Average'].max():.1f}")
+                
+                # Показываем дополнительную информацию о ручном фильтре
+                if manual_min_grade is not None or manual_max_grade is not None:
+                    filter_info = []
+                    if manual_min_grade is not None:
+                        filter_info.append(f"≥ {manual_min_grade}")
+                    if manual_max_grade is not None:
+                        filter_info.append(f"≤ {manual_max_grade}")
+                    
+                    st.info(f"🎯 Применен дополнительный фильтр оценок: {' и '.join(filter_info)}. "
+                           f"Отфильтровано {len(display_filtered_df)} из {len(filtered_df)} записей.")
             
-            if len(display_df) > 0:
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    height=400
-                )
-            else:
-                st.info("Нет данных для отображения")
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                height=400
+            )
             
             # Кнопки для скачивания
-            if len(display_df_source) > 0:
-                st.markdown("**📥 Экспорт данных:**")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    csv = display_df_source.to_csv(index=False)
+            st.markdown("**📥 Экспорт данных:**")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                csv = display_filtered_df.to_csv(index=False)
+                st.download_button(
+                    label="📄 Полные данные (CSV)",
+                    data=csv,
+                    file_name=f'grades_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                    mime='text/csv'
+                )
+            
+            with col2:
+                summary_stats = display_filtered_df.groupby(['Class', 'Subject'])['Average'].agg(['mean', 'count', 'std']).round(2)
+                st.download_button(
+                    label="📊 Сводная статистика (CSV)",
+                    data=summary_stats.to_csv(),
+                    file_name=f'summary_stats_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                    mime='text/csv'
+                )
+            
+            with col3:
+                # Экспорт рейтинга предметов
+                if 'subject_avg' in locals():
+                    subject_ranking = subject_avg[['Subject', 'mean', 'count']].round(2)
+                    subject_ranking.columns = ['Предмет', 'Средняя_оценка', 'Количество_оценок']
                     st.download_button(
-                        label="📄 Полные данные (CSV)",
-                        data=csv,
-                        file_name=f'grades_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                        label="🏆 Рейтинг предметов (CSV)",
+                        data=subject_ranking.to_csv(index=False),
+                        file_name=f'subject_ranking_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
                         mime='text/csv'
                     )
-                
-                with col2:
-                    summary_stats = display_df_source.groupby(['Class', 'Subject'])['Average'].agg(['mean', 'count', 'std']).round(2)
-                    st.download_button(
-                        label="📊 Сводная статистика (CSV)",
-                        data=summary_stats.to_csv(),
-                        file_name=f'summary_stats_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-                        mime='text/csv'
-                    )
-                
-                with col3:
-                    # Экспорт рейтинга предметов
-                    if subject_avg is not None:
-                        subject_ranking = subject_avg[['Subject', 'mean', 'count']].round(2)
-                        subject_ranking.columns = ['Предмет', 'Средняя_оценка', 'Количество_оценок']
-                        st.download_button(
-                            label="🏆 Рейтинг предметов (CSV)",
-                            data=subject_ranking.to_csv(index=False),
-                            file_name=f'subject_ranking_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-                            mime='text/csv'
-                        )
     
     else:
         st.warning("⚠️ Нет данных для выбранных фильтров!")
@@ -959,20 +937,11 @@ def main():
         st.markdown("---")
         st.markdown("### 📈 Статистика")
         if len(filtered_df) > 0:
-            # Используем stats_df для статистики в сайдбаре
-            stats_df = filtered_df[
-                (filtered_df['Average'] >= stats_grade_range[0]) & 
-                (filtered_df['Average'] <= stats_grade_range[1])
-            ] if len(filtered_df) > 0 else pd.DataFrame()
-            
-            if len(stats_df) > 0:
-                st.write(f"**Записей:** {len(stats_df):,}")
-                st.write(f"**Медиана:** {stats_df['Average'].median():.1f}")
-                st.write(f"**Станд. отклонение:** {stats_df['Average'].std():.1f}")
-                st.write(f"**Мин. оценка:** {stats_df['Average'].min():.1f}")
-                st.write(f"**Макс. оценка:** {stats_df['Average'].max():.1f}")
-            else:
-                st.write("**Нет данных в диапазоне статистики**")
+            st.write(f"**Записей:** {len(filtered_df):,}")
+            st.write(f"**Медиана:** {filtered_df['Average'].median():.1f}")
+            st.write(f"**Станд. отклонение:** {filtered_df['Average'].std():.1f}")
+            st.write(f"**Мин. оценка:** {filtered_df['Average'].min():.1f}")
+            st.write(f"**Макс. оценка:** {filtered_df['Average'].max():.1f}")
         
         # Информация о параллелях
         if not filtered_df.empty:
@@ -1009,10 +978,6 @@ def main():
         • Включите для выбора целых параллелей
         • Например: 10 = все 10-е классы (10A, 10B, 10C...)
         
-        **📊 Диапазоны оценок:**
-        • Фильтр данных - отбирает записи
-        • Диапазон статистики - показывает статистику
-        
         **🏆 Рейтинг предметов:**
         • Зеленые - лучшие предметы
         • Красные - требуют внимания
@@ -1022,11 +987,10 @@ def main():
         • Используйте готовые пресеты по параллелям
         • Делитесь настройками с коллегами
         
-        **📈 Категории оценок:**
-        • [0;40) - Неудовлетворительно
-        • [40;65) - Удовлетворительно  
-        • [65;85) - Хорошо
-        • [85;100] - Отлично
+        **🎯 Ручной фильтр оценок:**
+        • В разделе "Детальные данные"
+        • Точная настройка диапазона
+        • Применяется к уже отфильтрованным данным
         """)
 
 if __name__ == "__main__":
