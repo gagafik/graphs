@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 # Проверяем и импортируем Plotly
 try:
     import plotly.express as px
     import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     PLOTLY_AVAILABLE = True
 except ImportError:
     st.error("Plotly не установлен. Установите с помощью: pip install plotly")
@@ -30,7 +31,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": [],
             "grade_range": [0, 100],
-            "top_n": 10
+            "top_n": 10,
+            "date_range": None
         },
         "2-е параллель": {
             "classes": [],
@@ -38,7 +40,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["2"],
             "subjects": [],
             "grade_range": [0, 100],
-            "top_n": 10
+            "top_n": 10,
+            "date_range": None
         },
         "Старшие классы (10-11)": {
             "classes": [],
@@ -46,7 +49,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["10", "11"],
             "subjects": [],
             "grade_range": [0, 100],
-            "top_n": 15
+            "top_n": 15,
+            "date_range": None
         },
         "Средние классы (7-9)": {
             "classes": [],
@@ -54,7 +58,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": ["7", "8", "9"],
             "subjects": [],
             "grade_range": [0, 100],
-            "top_n": 12
+            "top_n": 12,
+            "date_range": None
         },
         "Точные науки": {
             "classes": [],
@@ -62,7 +67,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": ["Math", "Physics", "Chemistry", "CS", "Calc", "Further Math"],
             "grade_range": [0, 100],
-            "top_n": 6
+            "top_n": 6,
+            "date_range": None
         },
         "Языки": {
             "classes": [],
@@ -70,7 +76,8 @@ if 'filter_presets' not in st.session_state:
             "parallels": [],
             "subjects": ["English", "ESL", "Rus", "Kaz", "RusLit", "KazLit"],
             "grade_range": [0, 100],
-            "top_n": 8
+            "top_n": 8,
+            "date_range": None
         }
     }
 
@@ -81,42 +88,13 @@ if 'current_filters' not in st.session_state:
         "parallels": [],
         "subjects": [],
         "grade_range": [0, 100],
-        "top_n": 10
+        "top_n": 10,
+        "date_range": None
     }
 
-@st.cache_data
-def load_data():
-    """Загружает и кеширует данные"""
-    try:
-        possible_files = [
-            'Marks 2526.xlsx',
-            'marks_2526.xlsx', 
-            'data/Marks 2526.xlsx',
-            'data/marks_2526.xlsx'
-        ]
-        
-        df = None
-        for file_path in possible_files:
-            try:
-                df = pd.read_excel(file_path, sheet_name='Average year, no teacher')
-                st.success(f"✅ Данные загружены из {file_path}")
-                break
-            except FileNotFoundError:
-                continue
-        
-        if df is None:
-            st.warning("⚠️ Файл Excel не найден. Используются демо-данные.")
-            df = create_demo_data()
-        
-        return df
-        
-    except Exception as e:
-        st.error(f"Ошибка загрузки данных: {e}")
-        st.info("Используются демо-данные для демонстрации")
-        return create_demo_data()
 
 def create_demo_data():
-    """Создает демо-данные для демонстрации"""
+    """Создает демо-данные для демонстрации с датами"""
     np.random.seed(42)
     
     students = [f"Студент_{i}" for i in range(1, 101)]
@@ -125,32 +103,53 @@ def create_demo_data():
     subjects = ['Math', 'Physics', 'Chemistry', 'Biology', 'English', 'History', 
                 'Geography', 'Literature', 'CS', 'Art', 'PE', 'Music']
     
+    # Генерируем даты за последние 12 месяцев
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)
+    
     data = []
     for student in students:
         class_name = np.random.choice(classes)
-        for subject in np.random.choice(subjects, size=np.random.randint(6, 10), replace=False):
-            # Создаем более реалистичное распределение оценок
-            base_score = 75
-            if subject in ['Math', 'Physics', 'Chemistry']:
-                base_score = 70  # Точные науки чуть сложнее
-            elif subject in ['Art', 'PE', 'Music']:
-                base_score = 85  # Творческие предметы легче
+        student_subjects = np.random.choice(subjects, size=np.random.randint(6, 10), replace=False)
+        
+        # Несколько оценок для каждого предмета в разные даты
+        for subject in student_subjects:
+            num_grades = np.random.randint(3, 8)  # 3-7 оценок за год
             
-            score = np.random.normal(base_score, 12)
-            score = max(30, min(100, score))
-            data.append({
-                'Student': student,
-                'Class': class_name,
-                'Subject': subject,
-                'Average': round(score, 1)
-            })
+            for _ in range(num_grades):
+                # Случайная дата
+                random_days = np.random.randint(0, 365)
+                grade_date = start_date + timedelta(days=random_days)
+                
+                # Создаем более реалистичное распределение оценок с трендом
+                base_score = 75
+                if subject in ['Math', 'Physics', 'Chemistry']:
+                    base_score = 70
+                elif subject in ['Art', 'PE', 'Music']:
+                    base_score = 85
+                
+                # Добавляем небольшой положительный тренд со временем
+                time_factor = random_days / 365 * 3  # До +3 баллов за год
+                
+                score = np.random.normal(base_score + time_factor, 12)
+                score = max(30, min(100, score))
+                
+                data.append({
+                    'Student': student,
+                    'Class': class_name,
+                    'Subject': subject,
+                    'Average': round(score, 1),
+                    'Date': grade_date.date()
+                })
     
     return pd.DataFrame(data)
+
 
 def extract_parallel_from_class(class_name):
     """Извлекает номер параллели из названия класса"""
     match = re.search(r'^(\d+)', str(class_name))
     return match.group(1) if match else 'Другие'
+
 
 def get_available_parallels(df):
     """Получает список доступных параллелей"""
@@ -160,6 +159,7 @@ def get_available_parallels(df):
         if parallel != 'Другие':
             parallels.add(parallel)
     return sorted(list(parallels), key=lambda x: int(x) if x.isdigit() else 999)
+
 
 def get_classes_by_parallels(df, selected_parallels):
     """Возвращает классы для выбранных параллелей"""
@@ -173,6 +173,7 @@ def get_classes_by_parallels(df, selected_parallels):
             classes.append(class_name)
     
     return sorted(classes)
+
 
 def create_plotly_chart(chart_type, data, **kwargs):
     """Создает графики Plotly с обработкой ошибок"""
@@ -191,9 +192,14 @@ def create_plotly_chart(chart_type, data, **kwargs):
             return px.box(data, **kwargs)
         elif chart_type == 'heatmap':
             return px.imshow(data, **kwargs)
+        elif chart_type == 'line':
+            return px.line(data, **kwargs)
+        elif chart_type == 'area':
+            return px.area(data, **kwargs)
     except Exception as e:
         st.error(f"Ошибка создания графика: {e}")
         return None
+
 
 def save_preset():
     """Сохраняет текущие фильтры как пресет"""
@@ -208,11 +214,13 @@ def save_preset():
     else:
         st.warning("⚠️ Введите название пресета!")
 
+
 def load_preset(preset_name):
     """Загружает пресет фильтров"""
     if preset_name in st.session_state.filter_presets:
         st.session_state.current_filters = st.session_state.filter_presets[preset_name].copy()
         st.success(f"✅ Пресет '{preset_name}' загружен!")
+
 
 def delete_preset(preset_name):
     """Удаляет пресет"""
@@ -220,9 +228,11 @@ def delete_preset(preset_name):
         del st.session_state.filter_presets[preset_name]
         st.success(f"✅ Пресет '{preset_name}' удален!")
 
+
 def export_presets():
     """Экспортирует пресеты в JSON"""
-    return json.dumps(st.session_state.filter_presets, indent=2, ensure_ascii=False)
+    return json.dumps(st.session_state.filter_presets, indent=2, ensure_ascii=False, default=str)
+
 
 def import_presets(json_data):
     """Импортирует пресеты из JSON"""
@@ -232,6 +242,7 @@ def import_presets(json_data):
         st.success(f"✅ Импортировано {len(imported_presets)} пресетов!")
     except json.JSONDecodeError:
         st.error("❌ Ошибка: неверный формат JSON!")
+
 
 def render_filter_sidebar(df):
     """Отображает боковую панель с фильтрами и пресетами"""
@@ -296,6 +307,70 @@ def render_filter_sidebar(df):
     
     # Получаем текущие значения из session_state
     current_filters = st.session_state.current_filters
+    
+    # === ФИЛЬТР ПО ДАТАМ ===
+    st.sidebar.markdown("**📅 Период данных:**")
+    
+    # Получаем диапазон дат из данных
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+        min_date = df['Date'].min().date()
+        max_date = df['Date'].max().date()
+        
+        # Опции быстрого выбора периода
+        date_preset = st.sidebar.selectbox(
+            "Быстрый выбор периода:",
+            ["Произвольный период", "Последний месяц", "Последние 3 месяца", 
+             "Последние 6 месяцев", "Последний год", "Весь период"]
+        )
+        
+        today = datetime.now().date()
+        
+        if date_preset == "Последний месяц":
+            default_start = today - timedelta(days=30)
+            default_end = today
+        elif date_preset == "Последние 3 месяца":
+            default_start = today - timedelta(days=90)
+            default_end = today
+        elif date_preset == "Последние 6 месяцев":
+            default_start = today - timedelta(days=180)
+            default_end = today
+        elif date_preset == "Последний год":
+            default_start = today - timedelta(days=365)
+            default_end = today
+        elif date_preset == "Весь период":
+            default_start = min_date
+            default_end = max_date
+        else:  # Произвольный период
+            default_start = min_date
+            default_end = max_date
+        
+        # Ограничиваем даты доступным диапазоном
+        default_start = max(default_start, min_date)
+        default_end = min(default_end, max_date)
+        
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "С:",
+                value=default_start,
+                min_value=min_date,
+                max_value=max_date
+            )
+        with col2:
+            end_date = st.date_input(
+                "По:",
+                value=default_end,
+                min_value=min_date,
+                max_value=max_date
+            )
+        
+        date_range = (start_date, end_date)
+    else:
+        date_range = None
+        st.sidebar.info("📅 Даты не найдены в данных")
+    
+    st.sidebar.markdown("---")
     
     # Переключатель режима фильтрации
     parallel_mode = st.sidebar.checkbox(
@@ -374,7 +449,8 @@ def render_filter_sidebar(df):
         'parallels': selected_parallels,
         'subjects': selected_subjects,
         'grade_range': list(grade_range),
-        'top_n': top_n
+        'top_n': top_n,
+        'date_range': date_range
     }
     
     # Кнопка сброса фильтров
@@ -385,15 +461,26 @@ def render_filter_sidebar(df):
             'parallels': [],
             'subjects': [],
             'grade_range': [min_possible, max_possible],
-            'top_n': 10
+            'top_n': 10,
+            'date_range': None
         }
         st.rerun()
     
-    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels
+    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, date_range
 
-def apply_filters(df, selected_classes, selected_subjects, grade_range):
+
+def apply_filters(df, selected_classes, selected_subjects, grade_range, date_range=None):
     """Применяет фильтры к данным"""
     filtered_df = df.copy()
+    
+    # Фильтр по датам
+    if date_range and 'Date' in filtered_df.columns:
+        start_date, end_date = date_range
+        filtered_df['Date'] = pd.to_datetime(filtered_df['Date'])
+        filtered_df = filtered_df[
+            (filtered_df['Date'].dt.date >= start_date) & 
+            (filtered_df['Date'].dt.date <= end_date)
+        ]
     
     # Фильтр по классам
     if selected_classes:
@@ -411,6 +498,7 @@ def apply_filters(df, selected_classes, selected_subjects, grade_range):
     
     return filtered_df
 
+
 def apply_manual_grade_filter(df, min_grade, max_grade):
     """Применяет ручной фильтр по диапазону оценок"""
     if min_grade is not None and max_grade is not None:
@@ -421,10 +509,11 @@ def apply_manual_grade_filter(df, min_grade, max_grade):
         return df[df['Average'] <= max_grade]
     return df
 
-def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels):
+
+def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels, date_range):
     """Отображает сводку примененных фильтров"""
     with st.expander("🔍 Примененные фильтры", expanded=False):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             if parallel_mode and selected_parallels:
@@ -455,12 +544,20 @@ def render_filter_summary(selected_classes, selected_subjects, grade_range, orig
             st.write("**📊 Диапазон оценок:**")
             st.write(f"• {grade_range[0]} - {grade_range[1]}")
         
+        with col4:
+            st.write("**📅 Период:**")
+            if date_range:
+                st.write(f"• {date_range[0]} — {date_range[1]}")
+            else:
+                st.write("• Весь период")
+        
         # Статистика фильтрации
         original_count = len(original_df)
         filtered_count = len(filtered_df)
         percentage = (filtered_count / original_count * 100) if original_count > 0 else 0
         
         st.info(f"📈 Отображено {filtered_count:,} из {original_count:,} записей ({percentage:.1f}%)")
+
 
 def create_subject_ranking_charts(filtered_df, top_n):
     """Создает графики рейтинга лучших и худших предметов"""
@@ -518,7 +615,7 @@ def create_subject_ranking_charts(filtered_df, top_n):
                 y='Subject',
                 orientation='h',
                 color='mean',
-                color_continuous_scale='Reds_r',  # Обратная красная шкала
+                color_continuous_scale='Reds_r',
                 labels={'mean': 'Средняя оценка', 'Subject': 'Предмет'},
                 text='mean'
             )
@@ -542,26 +639,278 @@ def create_subject_ranking_charts(filtered_df, top_n):
     
     return subject_avg
 
+
+def create_trend_charts(filtered_df):
+    """Создает графики трендов по времени"""
+    if 'Date' not in filtered_df.columns or filtered_df.empty:
+        st.info("📅 Нет данных о датах для построения трендов")
+        return
+    
+    st.subheader("📈 Анализ трендов")
+    
+    # Преобразуем даты
+    df_trends = filtered_df.copy()
+    df_trends['Date'] = pd.to_datetime(df_trends['Date'])
+    
+    # Определяем оптимальную группировку по дате
+    date_range_days = (df_trends['Date'].max() - df_trends['Date'].min()).days
+    
+    if date_range_days <= 31:
+        freq = 'D'
+        freq_label = 'день'
+    elif date_range_days <= 90:
+        freq = 'W'
+        freq_label = 'неделя'
+    else:
+        freq = 'M'
+        freq_label = 'месяц'
+    
+    # Выбор типа тренда
+    trend_type = st.radio(
+        "Выберите тип анализа тренда:",
+        ["Общий тренд", "По предметам", "По классам", "По параллелям"],
+        horizontal=True
+    )
+    
+    if trend_type == "Общий тренд":
+        # Агрегация по периодам
+        df_trends['Period'] = df_trends['Date'].dt.to_period(freq).dt.to_timestamp()
+        trend_data = df_trends.groupby('Period').agg({
+            'Average': ['mean', 'std', 'count']
+        }).reset_index()
+        trend_data.columns = ['Period', 'Mean', 'Std', 'Count']
+        trend_data['Mean'] = trend_data['Mean'].round(1)
+        
+        if PLOTLY_AVAILABLE and len(trend_data) > 1:
+            # Создаем график с трендлайном и доверительным интервалом
+            fig = go.Figure()
+            
+            # Основная линия
+            fig.add_trace(go.Scatter(
+                x=trend_data['Period'],
+                y=trend_data['Mean'],
+                mode='lines+markers',
+                name='Средний балл',
+                line=dict(color='#636EFA', width=3),
+                marker=dict(size=8)
+            ))
+            
+            # Добавляем скользящее среднее (тренд)
+            if len(trend_data) >= 3:
+                trend_data['MA'] = trend_data['Mean'].rolling(window=3, min_periods=1).mean()
+                fig.add_trace(go.Scatter(
+                    x=trend_data['Period'],
+                    y=trend_data['MA'],
+                    mode='lines',
+                    name='Скользящее среднее (тренд)',
+                    line=dict(color='#EF553B', width=2, dash='dash')
+                ))
+            
+            # Доверительный интервал (±1 std)
+            if trend_data['Std'].notna().any():
+                fig.add_trace(go.Scatter(
+                    x=pd.concat([trend_data['Period'], trend_data['Period'][::-1]]),
+                    y=pd.concat([trend_data['Mean'] + trend_data['Std'], 
+                                (trend_data['Mean'] - trend_data['Std'])[::-1]]),
+                    fill='toself',
+                    fillcolor='rgba(99, 110, 250, 0.2)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='±1 станд. отклонение',
+                    showlegend=True
+                ))
+            
+            fig.update_layout(
+                title=f'Динамика среднего балла (группировка по {freq_label})',
+                xaxis_title='Период',
+                yaxis_title='Средний балл',
+                height=450,
+                hovermode='x unified'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Статистика тренда
+            col1, col2, col3, col4 = st.columns(4)
+            
+            first_period = trend_data['Mean'].iloc[0]
+            last_period = trend_data['Mean'].iloc[-1]
+            change = last_period - first_period
+            pct_change = (change / first_period * 100) if first_period > 0 else 0
+            
+            with col1:
+                st.metric("Начало периода", f"{first_period:.1f}")
+            with col2:
+                st.metric("Конец периода", f"{last_period:.1f}")
+            with col3:
+                st.metric("Изменение", f"{change:+.1f}", delta=f"{pct_change:+.1f}%")
+            with col4:
+                trend_direction = "📈 Рост" if change > 0.5 else "📉 Снижение" if change < -0.5 else "➡️ Стабильно"
+                st.metric("Тренд", trend_direction)
+        else:
+            st.dataframe(trend_data)
+    
+    elif trend_type == "По предметам":
+        # Выбор предметов для сравнения
+        available_subjects = df_trends['Subject'].unique().tolist()
+        
+        default_subjects = available_subjects[:5] if len(available_subjects) > 5 else available_subjects
+        selected_subjects_trend = st.multiselect(
+            "Выберите предметы для сравнения:",
+            options=available_subjects,
+            default=default_subjects,
+            max_selections=8
+        )
+        
+        if selected_subjects_trend:
+            df_subjects = df_trends[df_trends['Subject'].isin(selected_subjects_trend)]
+            df_subjects['Period'] = df_subjects['Date'].dt.to_period(freq).dt.to_timestamp()
+            
+            trend_by_subject = df_subjects.groupby(['Period', 'Subject'])['Average'].mean().reset_index()
+            trend_by_subject['Average'] = trend_by_subject['Average'].round(1)
+            
+            if PLOTLY_AVAILABLE and len(trend_by_subject) > 0:
+                fig = create_plotly_chart(
+                    'line',
+                    trend_by_subject,
+                    x='Period',
+                    y='Average',
+                    color='Subject',
+                    markers=True,
+                    labels={'Average': 'Средний балл', 'Period': 'Период', 'Subject': 'Предмет'}
+                )
+                if fig:
+                    fig.update_layout(
+                        title=f'Динамика по предметам (группировка по {freq_label})',
+                        height=500,
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    elif trend_type == "По классам":
+        # Выбор классов для сравнения
+        available_classes = df_trends['Class'].unique().tolist()
+        
+        default_classes = available_classes[:5] if len(available_classes) > 5 else available_classes
+        selected_classes_trend = st.multiselect(
+            "Выберите классы для сравнения:",
+            options=available_classes,
+            default=default_classes,
+            max_selections=8
+        )
+        
+        if selected_classes_trend:
+            df_classes = df_trends[df_trends['Class'].isin(selected_classes_trend)]
+            df_classes['Period'] = df_classes['Date'].dt.to_period(freq).dt.to_timestamp()
+            
+            trend_by_class = df_classes.groupby(['Period', 'Class'])['Average'].mean().reset_index()
+            trend_by_class['Average'] = trend_by_class['Average'].round(1)
+            
+            if PLOTLY_AVAILABLE and len(trend_by_class) > 0:
+                fig = create_plotly_chart(
+                    'line',
+                    trend_by_class,
+                    x='Period',
+                    y='Average',
+                    color='Class',
+                    markers=True,
+                    labels={'Average': 'Средний балл', 'Period': 'Период', 'Class': 'Класс'}
+                )
+                if fig:
+                    fig.update_layout(
+                        title=f'Динамика по классам (группировка по {freq_label})',
+                        height=500,
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    else:  # По параллелям
+        df_trends['Parallel'] = df_trends['Class'].apply(extract_parallel_from_class)
+        df_trends['Period'] = df_trends['Date'].dt.to_period(freq).dt.to_timestamp()
+        
+        trend_by_parallel = df_trends.groupby(['Period', 'Parallel'])['Average'].mean().reset_index()
+        trend_by_parallel['Average'] = trend_by_parallel['Average'].round(1)
+        
+        # Сортируем параллели по числовому значению
+        trend_by_parallel['Parallel_num'] = trend_by_parallel['Parallel'].apply(
+            lambda x: int(x) if x.isdigit() else 999
+        )
+        trend_by_parallel = trend_by_parallel.sort_values(['Period', 'Parallel_num'])
+        
+        if PLOTLY_AVAILABLE and len(trend_by_parallel) > 0:
+            fig = create_plotly_chart(
+                'line',
+                trend_by_parallel,
+                x='Period',
+                y='Average',
+                color='Parallel',
+                markers=True,
+                labels={'Average': 'Средний балл', 'Period': 'Период', 'Parallel': 'Параллель'}
+            )
+            if fig:
+                fig.update_layout(
+                    title=f'Динамика по параллелям (группировка по {freq_label})',
+                    height=500,
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+
+def create_heatmap_calendar(filtered_df):
+    """Создает тепловую карту по дням/неделям"""
+    if 'Date' not in filtered_df.columns or filtered_df.empty:
+        return
+    
+    st.subheader("🗓️ Тепловая карта активности")
+    
+    df_heat = filtered_df.copy()
+    df_heat['Date'] = pd.to_datetime(df_heat['Date'])
+    df_heat['DayOfWeek'] = df_heat['Date'].dt.day_name()
+    df_heat['Week'] = df_heat['Date'].dt.isocalendar().week
+    
+    # Агрегация по дню недели и неделе
+    heat_data = df_heat.groupby(['Week', 'DayOfWeek'])['Average'].mean().reset_index()
+    heat_pivot = heat_data.pivot(index='DayOfWeek', columns='Week', values='Average')
+    
+    # Сортируем дни недели
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    heat_pivot = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
+    
+    if PLOTLY_AVAILABLE and not heat_pivot.empty:
+        fig = px.imshow(
+            heat_pivot.values,
+            x=heat_pivot.columns.tolist(),
+            y=heat_pivot.index.tolist(),
+            color_continuous_scale='RdYlGn',
+            labels={'x': 'Неделя', 'y': 'День недели', 'color': 'Ср. балл'},
+            aspect='auto'
+        )
+        fig.update_layout(
+            title='Средний балл по дням недели и неделям года',
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def main():
     st.title("📊 Дашборд успеваемости школы")
-    st.markdown("*Интерактивная аналитика с фильтрами по параллелям и рейтингом предметов*")
+    st.markdown("*Интерактивная аналитика с фильтрами по датам, параллелям и анализом трендов*")
     st.markdown("---")
     
-    # Загрузка данных
-    df = load_data()
+    # Загрузка демо-данных
+    df = create_demo_data()
     
     if df is None or len(df) == 0:
         st.error("Не удалось загрузить данные")
         return
     
     # Отображение фильтров и получение выбранных значений
-    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels = render_filter_sidebar(df)
+    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, date_range = render_filter_sidebar(df)
     
     # Применение фильтров
-    filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range)
+    filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range, date_range)
     
     # Отображение сводки фильтров
-    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels)
+    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels, date_range)
     
     # Основная статистика
     if len(filtered_df) > 0:
@@ -597,6 +946,11 @@ def main():
                 value=f"{avg_score:.1f}",
                 delta=f"{delta:+.1f}"
             )
+        
+        st.markdown("---")
+        
+        # === НОВЫЙ РАЗДЕЛ: ТРЕНДЫ ===
+        create_trend_charts(filtered_df)
         
         st.markdown("---")
         
@@ -636,7 +990,6 @@ def main():
             if parallel_mode and selected_parallels and len(selected_parallels) > 1:
                 st.subheader("📢 Сравнение параллелей")
                 
-                # Добавляем колонку с параллелью для анализа
                 filtered_df_with_parallel = filtered_df.copy()
                 filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
                 
@@ -660,15 +1013,15 @@ def main():
                 else:
                     st.dataframe(parallel_stats.rename(columns={'Parallel': 'Параллель', 'mean': 'Средняя оценка'}))
             else:
-                # Статистика по категориям оценок - ОБНОВЛЕННЫЕ КАТЕГОРИИ
+                # Статистика по категориям оценок
                 st.subheader("📈 Категории успеваемости")
                 
-                # Создаем категории с новыми диапазонами
                 bins = [0, 40, 65, 85, 100]
                 labels = ['Неуд. (0-39)', 'Удовл. (40-64)', 'Хорошо (65-84)', 'Отлично (85-100)']
-                filtered_df['Grade_Category'] = pd.cut(filtered_df['Average'], bins=bins, labels=labels, include_lowest=True)
+                filtered_df_copy = filtered_df.copy()
+                filtered_df_copy['Grade_Category'] = pd.cut(filtered_df_copy['Average'], bins=bins, labels=labels, include_lowest=True)
                 
-                category_counts = filtered_df['Grade_Category'].value_counts()
+                category_counts = filtered_df_copy['Grade_Category'].value_counts()
                 
                 if PLOTLY_AVAILABLE and len(category_counts) > 0:
                     fig_pie = go.Figure(data=[go.Pie(
@@ -690,7 +1043,6 @@ def main():
             class_avg['mean'] = class_avg['mean'].round(1)
             class_avg = class_avg.sort_values('mean', ascending=False)
             
-            # Показываем топ и аутсайдеров
             col1, col2 = st.columns(2)
             
             with col1:
@@ -705,7 +1057,6 @@ def main():
                 for idx, row in bottom_classes.iterrows():
                     st.write(f"• {row['Class']}: {row['mean']:.1f} ({row['count']} оценок)")
             
-            # Scatter plot успеваемости классов
             if PLOTLY_AVAILABLE and len(class_avg) > 0:
                 fig_classes = create_plotly_chart(
                     'scatter',
@@ -724,7 +1075,7 @@ def main():
                     st.plotly_chart(fig_classes, use_container_width=True)
         
         # Box plot анализ
-        if len(filtered_df) > 50:  # Показываем только если достаточно данных
+        if len(filtered_df) > 50:
             st.subheader("📈 Детальный анализ распределения")
             
             analysis_type = st.radio(
@@ -735,7 +1086,6 @@ def main():
             
             if PLOTLY_AVAILABLE:
                 if analysis_type == "По классам":
-                    # Ограничиваем количество классов для читаемости
                     top_classes_for_box = filtered_df.groupby('Class')['Average'].count().nlargest(15).index
                     df_for_box = filtered_df[filtered_df['Class'].isin(top_classes_for_box)]
                     
@@ -747,7 +1097,6 @@ def main():
                         labels={'Average': 'Оценка', 'Class': 'Класс'}
                     )
                 elif analysis_type == "По предметам":
-                    # Ограничиваем количество предметов для читаемости
                     top_subjects_for_box = filtered_df.groupby('Subject')['Average'].count().nlargest(12).index
                     df_for_box = filtered_df[filtered_df['Subject'].isin(top_subjects_for_box)]
                     
@@ -758,7 +1107,7 @@ def main():
                         y='Average',
                         labels={'Average': 'Оценка', 'Subject': 'Предмет'}
                     )
-                else:  # По параллелям
+                else:
                     filtered_df_with_parallel = filtered_df.copy()
                     filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
                     
@@ -775,7 +1124,6 @@ def main():
                     fig_box.update_xaxes(tickangle=-45)
                     st.plotly_chart(fig_box, use_container_width=True)
             else:
-                # Fallback: статистика
                 if analysis_type == "По классам":
                     box_stats = filtered_df.groupby('Class')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
                 elif analysis_type == "По предметам":
@@ -787,15 +1135,14 @@ def main():
                 
                 st.dataframe(box_stats, use_container_width=True)
         
-        # Детальная таблица с улучшенными опциями - ДОБАВЛЯЕМ РУЧНОЙ ФИЛЬТР ОЦЕНОК
+        # Детальная таблица с улучшенными опциями
         with st.expander("📋 Детальные данные и экспорт"):
-            # Дополнительные опции для таблицы
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 sort_by = st.selectbox(
                     "Сортировать по:",
-                    ["Average", "Student", "Class", "Subject"],
+                    ["Average", "Student", "Class", "Subject", "Date"],
                     index=0
                 )
             
@@ -816,7 +1163,7 @@ def main():
             with col4:
                 show_stats = st.checkbox("Показать статистику", value=True)
             
-            # НОВЫЙ РУЧНОЙ ФИЛЬТР ПО ДИАПАЗОНУ ОЦЕНОК
+            # Ручной фильтр по диапазону оценок
             st.markdown("**🎯 Дополнительный фильтр по диапазону оценок:**")
             col1, col2 = st.columns(2)
             
@@ -842,21 +1189,17 @@ def main():
                     help="Оставьте пустым для отключения фильтра"
                 )
             
-            # Применяем ручной фильтр оценок к уже отфильтрованным данным
             display_filtered_df = apply_manual_grade_filter(filtered_df, manual_min_grade, manual_max_grade)
             
-            # Применяем сортировку
             ascending = sort_order == "По возрастанию"
             sorted_df = display_filtered_df.sort_values(sort_by, ascending=ascending)
             
-            # Ограничиваем количество строк
             if show_rows != "Все":
                 display_df = sorted_df.head(show_rows)
             else:
                 display_df = sorted_df
             
             if show_stats:
-                # Статистика по отображаемым данным
                 st.markdown("**📊 Статистика отображаемых данных:**")
                 col1, col2, col3, col4, col5 = st.columns(5)
                 
@@ -871,7 +1214,6 @@ def main():
                 with col5:
                     st.metric("Диапазон", f"{display_df['Average'].min():.1f} - {display_df['Average'].max():.1f}")
                 
-                # Показываем дополнительную информацию о ручном фильтре
                 if manual_min_grade is not None or manual_max_grade is not None:
                     filter_info = []
                     if manual_min_grade is not None:
@@ -911,7 +1253,6 @@ def main():
                 )
             
             with col3:
-                # Экспорт рейтинга предметов
                 if 'subject_avg' in locals():
                     subject_ranking = subject_avg[['Subject', 'mean', 'count']].round(2)
                     subject_ranking.columns = ['Предмет', 'Средняя_оценка', 'Количество_оценок']
@@ -930,6 +1271,7 @@ def main():
         - Загрузить пресет 'Все данные'
         - Расширить диапазон оценок
         - Выбрать другие параллели или классы
+        - Расширить диапазон дат
         """)
     
     # Дополнительная информация в сайдбаре
@@ -948,50 +1290,7 @@ def main():
             st.markdown("### 📢 Доступные параллели")
             available_parallels = get_available_parallels(df)
             st.write(", ".join(available_parallels))
-        
-        st.markdown("---")
-        st.markdown("### 📁 Загрузка данных")
-        uploaded_file = st.file_uploader(
-            "Загрузите Excel файл",
-            type=['xlsx', 'xls'],
-            help="Выберите файл с данными об оценках"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                df_uploaded = pd.read_excel(uploaded_file, sheet_name=0)
-                st.success(f"✅ Файл загружен: {len(df_uploaded)} записей")
-                
-                if all(col in df_uploaded.columns for col in ['Student', 'Class', 'Subject', 'Average']):
-                    st.success("✅ Структура данных корректная")
-                else:
-                    st.warning("⚠️ Проверьте названия столбцов: Student, Class, Subject, Average")
-                    st.write("Найденные столбцы:", list(df_uploaded.columns))
-                    
-            except Exception as e:
-                st.error(f"❌ Ошибка загрузки: {e}")
-        
-        st.markdown("---")
-        st.markdown("### 💡 Подсказки")
-        st.info("""
-        **📢 Фильтр по параллелям:**
-        • Включите для выбора целых параллелей
-        • Например: 10 = все 10-е классы (10A, 10B, 10C...)
-        
-        **🏆 Рейтинг предметов:**
-        • Зеленые - лучшие предметы
-        • Красные - требуют внимания
-        
-        **📋 Пресеты:**
-        • Сохраняйте часто используемые фильтры
-        • Используйте готовые пресеты по параллелям
-        • Делитесь настройками с коллегами
-        
-        **🎯 Ручной фильтр оценок:**
-        • В разделе "Детальные данные"
-        • Точная настройка диапазона
-        • Применяется к уже отфильтрованным данным
-        """)
+
 
 if __name__ == "__main__":
     main()
