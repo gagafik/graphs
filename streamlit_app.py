@@ -93,6 +93,45 @@ if 'current_filters' not in st.session_state:
     }
 
 
+@st.cache_data
+def load_data():
+    """Загружает данные из Excel файла"""
+    try:
+        # Путь к файлу (в корне репозитория)
+        df = pd.read_excel('Marks 2526.xlsx', sheet_name='Average year, no teacher')
+        
+        # Проверяем наличие нужных колонок
+        required_cols = ['Student', 'Class', 'Subject', 'Average']
+        missing = [col for col in required_cols if col not in df.columns]
+        
+        if missing:
+            st.error(f"❌ Отсутствуют колонки: {missing}")
+            st.write("Найденные колонки:", list(df.columns))
+            return create_demo_data()
+        
+        # Проверяем наличие колонки Date
+        if 'Date' not in df.columns:
+            st.warning("⚠️ Колонка 'Date' не найдена. Графики трендов будут недоступны.")
+            # Добавляем фиктивную дату (сегодня) для совместимости
+            df['Date'] = pd.Timestamp.now()
+        else:
+            # Конвертируем дату
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        
+        st.success(f"✅ Загружено {len(df):,} записей из Excel")
+        return df
+        
+    except FileNotFoundError:
+        st.error("❌ Файл 'Marks 2526.xlsx' не найден!")
+        st.info("Используются демо-данные для демонстрации")
+        return create_demo_data()
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка загрузки: {e}")
+        st.info("Используются демо-данные для демонстрации")
+        return create_demo_data()
+
+
 def create_demo_data():
     """Создает демо-данные для демонстрации с датами"""
     np.random.seed(42)
@@ -593,7 +632,7 @@ def create_subject_ranking_charts(filtered_df, top_n):
                     showlegend=False
                 )
                 fig_best.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                st.plotly_chart(fig_best, use_container_width=True)
+                st.plotly_chart(fig_best, width="stretch")
         else:
             st.dataframe(
                 top_best[['Subject', 'mean', 'count']].rename(columns={
@@ -601,7 +640,7 @@ def create_subject_ranking_charts(filtered_df, top_n):
                     'mean': 'Средняя оценка', 
                     'count': 'Количество'
                 }),
-                use_container_width=True
+                width="stretch"
             )
     
     with col2:
@@ -626,7 +665,7 @@ def create_subject_ranking_charts(filtered_df, top_n):
                     showlegend=False
                 )
                 fig_worst.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                st.plotly_chart(fig_worst, use_container_width=True)
+                st.plotly_chart(fig_worst, width="stretch")
         else:
             st.dataframe(
                 top_worst[['Subject', 'mean', 'count']].rename(columns={
@@ -634,7 +673,7 @@ def create_subject_ranking_charts(filtered_df, top_n):
                     'mean': 'Средняя оценка', 
                     'count': 'Количество'
                 }),
-                use_container_width=True
+                width="stretch"
             )
     
     return subject_avg
@@ -727,7 +766,7 @@ def create_trend_charts(filtered_df):
                 hovermode='x unified'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Статистика тренда
             col1, col2, col3, col4 = st.columns(4)
@@ -784,7 +823,7 @@ def create_trend_charts(filtered_df):
                         height=500,
                         hovermode='x unified'
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
     
     elif trend_type == "По классам":
         # Выбор классов для сравнения
@@ -821,7 +860,7 @@ def create_trend_charts(filtered_df):
                         height=500,
                         hovermode='x unified'
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
     
     else:  # По параллелям
         df_trends['Parallel'] = df_trends['Class'].apply(extract_parallel_from_class)
@@ -852,7 +891,7 @@ def create_trend_charts(filtered_df):
                     height=500,
                     hovermode='x unified'
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
 
 def create_heatmap_calendar(filtered_df):
@@ -888,7 +927,7 @@ def create_heatmap_calendar(filtered_df):
             title='Средний балл по дням недели и неделям года',
             height=300
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def main():
@@ -896,8 +935,8 @@ def main():
     st.markdown("*Интерактивная аналитика с фильтрами по датам, параллелям и анализом трендов*")
     st.markdown("---")
     
-    # Загрузка демо-данных
-    df = create_demo_data()
+    # Загрузка данных из Excel
+    df = load_data()
     
     if df is None or len(df) == 0:
         st.error("Не удалось загрузить данные")
@@ -980,7 +1019,7 @@ def main():
                         line_color="red",
                         annotation_text=f"Среднее: {filtered_df['Average'].mean():.1f}"
                     )
-                    st.plotly_chart(fig_dist, use_container_width=True)
+                    st.plotly_chart(fig_dist, width="stretch")
             else:
                 st.write("Статистика распределения:")
                 st.write(filtered_df['Average'].describe())
@@ -1009,7 +1048,7 @@ def main():
                     )
                     if fig_parallels:
                         fig_parallels.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                        st.plotly_chart(fig_parallels, use_container_width=True)
+                        st.plotly_chart(fig_parallels, width="stretch")
                 else:
                     st.dataframe(parallel_stats.rename(columns={'Parallel': 'Параллель', 'mean': 'Средняя оценка'}))
             else:
@@ -1031,7 +1070,7 @@ def main():
                         marker_colors=['#ff4444', '#ff8800', '#88dd00', '#44dd44']
                     )])
                     fig_pie.update_layout(height=400)
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    st.plotly_chart(fig_pie, width="stretch")
                 else:
                     st.dataframe(category_counts.reset_index().rename(columns={'index': 'Категория', 'Grade_Category': 'Количество'}))
         
@@ -1072,7 +1111,7 @@ def main():
                 )
                 if fig_classes:
                     fig_classes.update_layout(height=400)
-                    st.plotly_chart(fig_classes, use_container_width=True)
+                    st.plotly_chart(fig_classes, width="stretch")
         
         # Box plot анализ
         if len(filtered_df) > 50:
@@ -1122,7 +1161,7 @@ def main():
                 if fig_box:
                     fig_box.update_layout(height=450)
                     fig_box.update_xaxes(tickangle=-45)
-                    st.plotly_chart(fig_box, use_container_width=True)
+                    st.plotly_chart(fig_box, width="stretch")
             else:
                 if analysis_type == "По классам":
                     box_stats = filtered_df.groupby('Class')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
@@ -1133,7 +1172,7 @@ def main():
                     filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
                     box_stats = filtered_df_with_parallel.groupby('Parallel')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
                 
-                st.dataframe(box_stats, use_container_width=True)
+                st.dataframe(box_stats, width="stretch")
         
         # Детальная таблица с улучшенными опциями
         with st.expander("📋 Детальные данные и экспорт"):
@@ -1226,7 +1265,7 @@ def main():
             
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width="stretch",
                 height=400
             )
             
