@@ -89,7 +89,17 @@ if 'current_filters' not in st.session_state:
         "subjects": [],
         "grade_range": [0, 100],
         "top_n": 10,
-        "date_range": None
+        "date_range": None,
+        "selected_dates": []  # Новое: для чекбоксов дат
+    }
+
+# Инициализация фильтров таблицы
+if 'table_filters' not in st.session_state:
+    st.session_state.table_filters = {
+        'Student': [],
+        'Class': [],
+        'Subject': [],
+        'Date': []
     }
 
 
@@ -283,6 +293,76 @@ def import_presets(json_data):
         st.error("❌ Ошибка: неверный формат JSON!")
 
 
+def render_excel_like_filter(column_name, df, filter_key):
+    """
+    Рендерит Excel-подобный фильтр с чекбоксами для колонки
+    
+    Args:
+        column_name: Название колонки для фильтрации
+        df: DataFrame с данными
+        filter_key: Ключ для хранения выбранных значений в session_state
+    """
+    # Получаем уникальные значения для колонки
+    unique_values = sorted(df[column_name].unique().tolist())
+    
+    # Для дат конвертируем в строковый формат для отображения
+    if column_name == 'Date':
+        unique_values = [pd.to_datetime(d).strftime('%Y-%m-%d') if pd.notna(d) else 'N/A' 
+                        for d in unique_values]
+        unique_values = sorted(list(set(unique_values)))
+    
+    # Получаем текущие выбранные значения
+    current_selection = st.session_state.table_filters.get(filter_key, [])
+    
+    # Создаем чекбокс "Выбрать все"
+    select_all = st.checkbox(
+        f"✅ Выбрать все ({len(unique_values)})",
+        value=len(current_selection) == 0,
+        key=f"select_all_{filter_key}"
+    )
+    
+    if select_all:
+        st.session_state.table_filters[filter_key] = []
+    else:
+        # Показываем чекбоксы для каждого значения
+        selected_values = []
+        
+        # Ограничиваем высоту для большого количества значений
+        max_display = 15
+        if len(unique_values) > max_display:
+            st.info(f"Показаны первые {max_display} из {len(unique_values)} значений")
+            display_values = unique_values[:max_display]
+        else:
+            display_values = unique_values
+        
+        for value in display_values:
+            if st.checkbox(
+                str(value), 
+                value=str(value) in [str(v) for v in current_selection],
+                key=f"filter_{filter_key}_{value}"
+            ):
+                selected_values.append(value)
+        
+        st.session_state.table_filters[filter_key] = selected_values
+
+
+def apply_table_filters(df):
+    """Применяет фильтры таблицы к DataFrame"""
+    filtered_df = df.copy()
+    
+    for column, selected_values in st.session_state.table_filters.items():
+        if selected_values:  # Если есть выбранные значения
+            if column == 'Date':
+                # Конвертируем даты для фильтрации
+                filtered_df['Date_str'] = pd.to_datetime(filtered_df['Date']).dt.strftime('%Y-%m-%d')
+                filtered_df = filtered_df[filtered_df['Date_str'].isin(selected_values)]
+                filtered_df = filtered_df.drop('Date_str', axis=1)
+            else:
+                filtered_df = filtered_df[filtered_df[column].isin(selected_values)]
+    
+    return filtered_df
+
+
 def render_filter_sidebar(df):
     """Отображает боковую панель с фильтрами и пресетами"""
     st.sidebar.header("🔧 Фильтры и Пресеты")
@@ -347,64 +427,93 @@ def render_filter_sidebar(df):
     # Получаем текущие значения из session_state
     current_filters = st.session_state.current_filters
     
-    # === ФИЛЬТР ПО ДАТАМ ===
+    # === НОВЫЙ ФИЛЬТР ПО ДАТАМ С ЧЕКБОКСАМИ ===
     st.sidebar.markdown("**📅 Период данных:**")
     
-    # Получаем диапазон дат из данных
+    # Получаем уникальные даты из данных
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
-        min_date = df['Date'].min().date()
-        max_date = df['Date'].max().date()
+        unique_dates = sorted(df['Date'].dt.date.unique().tolist())
         
-        # Опции быстрого выбора периода
-        date_preset = st.sidebar.selectbox(
-            "Быстрый выбор периода:",
-            ["Произвольный период", "Последний месяц", "Последние 3 месяца", 
-             "Последние 6 месяцев", "Последний год", "Весь период"]
+        # Опции быстрого выбора
+        date_filter_mode = st.sidebar.radio(
+            "Режим выбора дат:",
+            ["📆 Все даты", "📋 Выбор чекбоксами", "🔍 Быстрый период"],
+            index=0
         )
         
-        today = datetime.now().date()
-        
-        if date_preset == "Последний месяц":
-            default_start = today - timedelta(days=30)
-            default_end = today
-        elif date_preset == "Последние 3 месяца":
-            default_start = today - timedelta(days=90)
-            default_end = today
-        elif date_preset == "Последние 6 месяцев":
-            default_start = today - timedelta(days=180)
-            default_end = today
-        elif date_preset == "Последний год":
-            default_start = today - timedelta(days=365)
-            default_end = today
-        elif date_preset == "Весь период":
-            default_start = min_date
-            default_end = max_date
-        else:  # Произвольный период
-            default_start = min_date
-            default_end = max_date
-        
-        # Ограничиваем даты доступным диапазоном
-        default_start = max(default_start, min_date)
-        default_end = min(default_end, max_date)
-        
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            start_date = st.date_input(
-                "С:",
-                value=default_start,
-                min_value=min_date,
-                max_value=max_date
+        if date_filter_mode == "📋 Выбор чекбоксами":
+            st.sidebar.info(f"Всего дат: {len(unique_dates)}")
+            
+            # Показываем группировку по месяцам для удобства
+            dates_by_month = {}
+            for date in unique_dates:
+                month_key = date.strftime('%Y-%m')
+                if month_key not in dates_by_month:
+                    dates_by_month[month_key] = []
+                dates_by_month[month_key].append(date)
+            
+            selected_dates = []
+            
+            # Показываем по месяцам
+            for month_key in sorted(dates_by_month.keys(), reverse=True):
+                month_dates = dates_by_month[month_key]
+                
+                with st.sidebar.expander(f"📅 {month_key} ({len(month_dates)} дат)"):
+                    # Чекбокс для выбора всего месяца
+                    select_month = st.checkbox(
+                        f"Выбрать весь месяц",
+                        key=f"month_{month_key}"
+                    )
+                    
+                    if select_month:
+                        selected_dates.extend(month_dates)
+                    else:
+                        # Показываем отдельные даты
+                        for date in sorted(month_dates, reverse=True):
+                            if st.checkbox(
+                                date.strftime('%Y-%m-%d'),
+                                key=f"date_{date}"
+                            ):
+                                selected_dates.append(date)
+            
+            st.session_state.current_filters['selected_dates'] = selected_dates
+            date_range = None
+            
+        elif date_filter_mode == "🔍 Быстрый период":
+            # Опции быстрого выбора периода
+            date_preset = st.sidebar.selectbox(
+                "Быстрый выбор периода:",
+                ["Последний месяц", "Последние 3 месяца", 
+                 "Последние 6 месяцев", "Последний год", "Весь период"]
             )
-        with col2:
-            end_date = st.date_input(
-                "По:",
-                value=default_end,
-                min_value=min_date,
-                max_value=max_date
-            )
-        
-        date_range = (start_date, end_date)
+            
+            today = datetime.now().date()
+            max_date = max(unique_dates)
+            min_date = min(unique_dates)
+            
+            if date_preset == "Последний месяц":
+                start_date = today - timedelta(days=30)
+            elif date_preset == "Последние 3 месяца":
+                start_date = today - timedelta(days=90)
+            elif date_preset == "Последние 6 месяцев":
+                start_date = today - timedelta(days=180)
+            elif date_preset == "Последний год":
+                start_date = today - timedelta(days=365)
+            else:  # Весь период
+                start_date = min_date
+            
+            start_date = max(start_date, min_date)
+            end_date = max_date
+            
+            date_range = (start_date, end_date)
+            st.session_state.current_filters['selected_dates'] = []
+            st.sidebar.success(f"📅 {start_date} — {end_date}")
+            
+        else:  # Все даты
+            date_range = None
+            st.session_state.current_filters['selected_dates'] = []
+            
     else:
         date_range = None
         st.sidebar.info("📅 Даты не найдены в данных")
@@ -482,7 +591,7 @@ def render_filter_sidebar(df):
     )
     
     # Обновляем current_filters
-    st.session_state.current_filters = {
+    st.session_state.current_filters.update({
         'classes': selected_classes,
         'parallel_mode': parallel_mode,
         'parallels': selected_parallels,
@@ -490,7 +599,7 @@ def render_filter_sidebar(df):
         'grade_range': list(grade_range),
         'top_n': top_n,
         'date_range': date_range
-    }
+    })
     
     # Кнопка сброса фильтров
     if st.sidebar.button("🔄 Сбросить все фильтры"):
@@ -501,25 +610,23 @@ def render_filter_sidebar(df):
             'subjects': [],
             'grade_range': [min_possible, max_possible],
             'top_n': 10,
-            'date_range': None
+            'date_range': None,
+            'selected_dates': []
+        }
+        st.session_state.table_filters = {
+            'Student': [],
+            'Class': [],
+            'Subject': [],
+            'Date': []
         }
         st.rerun()
     
-    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, date_range
+    return selected_classes, selected_subjects, grade_range, date_range, top_n
 
 
-def apply_filters(df, selected_classes, selected_subjects, grade_range, date_range=None):
+def apply_filters(df, selected_classes, selected_subjects, grade_range, date_range):
     """Применяет фильтры к данным"""
     filtered_df = df.copy()
-    
-    # Фильтр по датам
-    if date_range and 'Date' in filtered_df.columns:
-        start_date, end_date = date_range
-        filtered_df['Date'] = pd.to_datetime(filtered_df['Date'])
-        filtered_df = filtered_df[
-            (filtered_df['Date'].dt.date >= start_date) & 
-            (filtered_df['Date'].dt.date <= end_date)
-        ]
     
     # Фильтр по классам
     if selected_classes:
@@ -531,651 +638,105 @@ def apply_filters(df, selected_classes, selected_subjects, grade_range, date_ran
     
     # Фильтр по диапазону оценок
     filtered_df = filtered_df[
-        (filtered_df['Average'] >= grade_range[0]) & 
+        (filtered_df['Average'] >= grade_range[0]) &
         (filtered_df['Average'] <= grade_range[1])
     ]
+    
+    # Фильтр по датам (из бокового меню)
+    if date_range:
+        start_date, end_date = date_range
+        filtered_df = filtered_df[
+            (pd.to_datetime(filtered_df['Date']).dt.date >= start_date) &
+            (pd.to_datetime(filtered_df['Date']).dt.date <= end_date)
+        ]
+    
+    # Фильтр по выбранным датам (чекбоксы)
+    selected_dates = st.session_state.current_filters.get('selected_dates', [])
+    if selected_dates:
+        filtered_df = filtered_df[
+            pd.to_datetime(filtered_df['Date']).dt.date.isin(selected_dates)
+        ]
     
     return filtered_df
 
 
 def apply_manual_grade_filter(df, min_grade, max_grade):
-    """Применяет ручной фильтр по диапазону оценок"""
-    if min_grade is not None and max_grade is not None:
-        return df[(df['Average'] >= min_grade) & (df['Average'] <= max_grade)]
-    elif min_grade is not None:
-        return df[df['Average'] >= min_grade]
-    elif max_grade is not None:
-        return df[df['Average'] <= max_grade]
-    return df
-
-
-def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels, date_range):
-    """Отображает сводку примененных фильтров"""
-    with st.expander("🔍 Примененные фильтры", expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if parallel_mode and selected_parallels:
-                st.write("**📢 Параллели:**")
-                st.write(f"• {', '.join(selected_parallels)} классы")
-                st.write(f"• *({len(selected_classes)} классов)*")
-            elif selected_classes:
-                st.write("**📚 Классы:**")
-                if len(selected_classes) <= 3:
-                    st.write(f"• {', '.join(selected_classes)}")
-                else:
-                    st.write(f"• {len(selected_classes)} классов")
-            else:
-                st.write("**📚 Классы:**")
-                st.write("• Все классы")
-        
-        with col2:
-            st.write("**📖 Предметы:**")
-            if selected_subjects:
-                if len(selected_subjects) <= 3:
-                    st.write(f"• {', '.join(selected_subjects)}")
-                else:
-                    st.write(f"• {len(selected_subjects)} предметов")
-            else:
-                st.write("• Все предметы")
-        
-        with col3:
-            st.write("**📊 Диапазон оценок:**")
-            st.write(f"• {grade_range[0]} - {grade_range[1]}")
-        
-        with col4:
-            st.write("**📅 Период:**")
-            if date_range:
-                st.write(f"• {date_range[0]} — {date_range[1]}")
-            else:
-                st.write("• Весь период")
-        
-        # Статистика фильтрации
-        original_count = len(original_df)
-        filtered_count = len(filtered_df)
-        percentage = (filtered_count / original_count * 100) if original_count > 0 else 0
-        
-        st.info(f"📈 Отображено {filtered_count:,} из {original_count:,} записей ({percentage:.1f}%)")
-
-
-def create_subject_ranking_charts(filtered_df, top_n):
-    """Создает графики рейтинга лучших и худших предметов"""
-    subject_avg = filtered_df.groupby('Subject')['Average'].agg(['mean', 'count']).reset_index()
-    subject_avg['mean'] = subject_avg['mean'].round(1)
-    subject_avg = subject_avg.sort_values('mean', ascending=False)
+    """Применяет дополнительный ручной фильтр по оценкам"""
+    filtered_df = df.copy()
     
-    # Топ лучших и худших
-    top_best = subject_avg.head(top_n)
-    top_worst = subject_avg.tail(top_n).sort_values('mean', ascending=True)
+    if min_grade is not None:
+        filtered_df = filtered_df[filtered_df['Average'] >= min_grade]
     
-    col1, col2 = st.columns(2)
+    if max_grade is not None:
+        filtered_df = filtered_df[filtered_df['Average'] <= max_grade]
     
-    with col1:
-        st.subheader(f"🏆 Топ-{top_n} лучших предметов")
-        
-        if PLOTLY_AVAILABLE and len(top_best) > 0:
-            fig_best = create_plotly_chart(
-                'bar',
-                top_best,
-                x='mean',
-                y='Subject',
-                orientation='h',
-                color='mean',
-                color_continuous_scale='Greens',
-                labels={'mean': 'Средняя оценка', 'Subject': 'Предмет'},
-                text='mean'
-            )
-            if fig_best:
-                fig_best.update_layout(
-                    height=400,
-                    yaxis={'categoryorder': 'total ascending'},
-                    showlegend=False
-                )
-                fig_best.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                st.plotly_chart(fig_best, width="stretch")
-        else:
-            st.dataframe(
-                top_best[['Subject', 'mean', 'count']].rename(columns={
-                    'Subject': 'Предмет',
-                    'mean': 'Средняя оценка', 
-                    'count': 'Количество'
-                }),
-                width="stretch"
-            )
-    
-    with col2:
-        st.subheader(f"⚠️ Топ-{top_n} предметов для внимания")
-        
-        if PLOTLY_AVAILABLE and len(top_worst) > 0:
-            fig_worst = create_plotly_chart(
-                'bar',
-                top_worst,
-                x='mean',
-                y='Subject',
-                orientation='h',
-                color='mean',
-                color_continuous_scale='Reds_r',
-                labels={'mean': 'Средняя оценка', 'Subject': 'Предмет'},
-                text='mean'
-            )
-            if fig_worst:
-                fig_worst.update_layout(
-                    height=400,
-                    yaxis={'categoryorder': 'total ascending'},
-                    showlegend=False
-                )
-                fig_worst.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                st.plotly_chart(fig_worst, width="stretch")
-        else:
-            st.dataframe(
-                top_worst[['Subject', 'mean', 'count']].rename(columns={
-                    'Subject': 'Предмет',
-                    'mean': 'Средняя оценка', 
-                    'count': 'Количество'
-                }),
-                width="stretch"
-            )
-    
-    return subject_avg
-
-
-def create_trend_charts(filtered_df):
-    """Создает графики трендов по времени"""
-    if 'Date' not in filtered_df.columns or filtered_df.empty:
-        st.info("📅 Нет данных о датах для построения трендов")
-        return
-    
-    st.subheader("📈 Анализ трендов")
-    
-    # Преобразуем даты
-    df_trends = filtered_df.copy()
-    df_trends['Date'] = pd.to_datetime(df_trends['Date'])
-    
-    # Определяем оптимальную группировку по дате
-    date_range_days = (df_trends['Date'].max() - df_trends['Date'].min()).days
-    
-    if date_range_days <= 31:
-        freq = 'D'
-        freq_label = 'день'
-    elif date_range_days <= 90:
-        freq = 'W'
-        freq_label = 'неделя'
-    else:
-        freq = 'M'
-        freq_label = 'месяц'
-    
-    # Выбор типа тренда
-    trend_type = st.radio(
-        "Выберите тип анализа тренда:",
-        ["Общий тренд", "По предметам", "По классам", "По параллелям"],
-        horizontal=True
-    )
-    
-    if trend_type == "Общий тренд":
-        # Агрегация по периодам
-        df_trends['Period'] = df_trends['Date'].dt.to_period(freq).dt.to_timestamp()
-        trend_data = df_trends.groupby('Period').agg({
-            'Average': ['mean', 'std', 'count']
-        }).reset_index()
-        trend_data.columns = ['Period', 'Mean', 'Std', 'Count']
-        trend_data['Mean'] = trend_data['Mean'].round(1)
-        
-        if PLOTLY_AVAILABLE and len(trend_data) > 1:
-            # Создаем график с трендлайном и доверительным интервалом
-            fig = go.Figure()
-            
-            # Основная линия
-            fig.add_trace(go.Scatter(
-                x=trend_data['Period'],
-                y=trend_data['Mean'],
-                mode='lines+markers',
-                name='Средний балл',
-                line=dict(color='#636EFA', width=3),
-                marker=dict(size=8)
-            ))
-            
-            # Добавляем скользящее среднее (тренд)
-            if len(trend_data) >= 3:
-                trend_data['MA'] = trend_data['Mean'].rolling(window=3, min_periods=1).mean()
-                fig.add_trace(go.Scatter(
-                    x=trend_data['Period'],
-                    y=trend_data['MA'],
-                    mode='lines',
-                    name='Скользящее среднее (тренд)',
-                    line=dict(color='#EF553B', width=2, dash='dash')
-                ))
-            
-            # Доверительный интервал (±1 std)
-            if trend_data['Std'].notna().any():
-                fig.add_trace(go.Scatter(
-                    x=pd.concat([trend_data['Period'], trend_data['Period'][::-1]]),
-                    y=pd.concat([trend_data['Mean'] + trend_data['Std'], 
-                                (trend_data['Mean'] - trend_data['Std'])[::-1]]),
-                    fill='toself',
-                    fillcolor='rgba(99, 110, 250, 0.2)',
-                    line=dict(color='rgba(255,255,255,0)'),
-                    name='±1 станд. отклонение',
-                    showlegend=True
-                ))
-            
-            fig.update_layout(
-                title=f'Динамика среднего балла (группировка по {freq_label})',
-                xaxis_title='Период',
-                yaxis_title='Средний балл',
-                height=450,
-                hovermode='x unified'
-            )
-            
-            st.plotly_chart(fig, width="stretch")
-            
-            # Статистика тренда
-            col1, col2, col3, col4 = st.columns(4)
-            
-            first_period = trend_data['Mean'].iloc[0]
-            last_period = trend_data['Mean'].iloc[-1]
-            change = last_period - first_period
-            pct_change = (change / first_period * 100) if first_period > 0 else 0
-            
-            with col1:
-                st.metric("Начало периода", f"{first_period:.1f}")
-            with col2:
-                st.metric("Конец периода", f"{last_period:.1f}")
-            with col3:
-                st.metric("Изменение", f"{change:+.1f}", delta=f"{pct_change:+.1f}%")
-            with col4:
-                trend_direction = "📈 Рост" if change > 0.5 else "📉 Снижение" if change < -0.5 else "➡️ Стабильно"
-                st.metric("Тренд", trend_direction)
-        else:
-            st.dataframe(trend_data)
-    
-    elif trend_type == "По предметам":
-        # Выбор предметов для сравнения
-        available_subjects = df_trends['Subject'].unique().tolist()
-        
-        default_subjects = available_subjects[:5] if len(available_subjects) > 5 else available_subjects
-        selected_subjects_trend = st.multiselect(
-            "Выберите предметы для сравнения:",
-            options=available_subjects,
-            default=default_subjects,
-            max_selections=8
-        )
-        
-        if selected_subjects_trend:
-            df_subjects = df_trends[df_trends['Subject'].isin(selected_subjects_trend)]
-            df_subjects['Period'] = df_subjects['Date'].dt.to_period(freq).dt.to_timestamp()
-            
-            trend_by_subject = df_subjects.groupby(['Period', 'Subject'])['Average'].mean().reset_index()
-            trend_by_subject['Average'] = trend_by_subject['Average'].round(1)
-            
-            if PLOTLY_AVAILABLE and len(trend_by_subject) > 0:
-                fig = create_plotly_chart(
-                    'line',
-                    trend_by_subject,
-                    x='Period',
-                    y='Average',
-                    color='Subject',
-                    markers=True,
-                    labels={'Average': 'Средний балл', 'Period': 'Период', 'Subject': 'Предмет'}
-                )
-                if fig:
-                    fig.update_layout(
-                        title=f'Динамика по предметам (группировка по {freq_label})',
-                        height=500,
-                        hovermode='x unified'
-                    )
-                    st.plotly_chart(fig, width="stretch")
-    
-    elif trend_type == "По классам":
-        # Выбор классов для сравнения
-        available_classes = df_trends['Class'].unique().tolist()
-        
-        default_classes = available_classes[:5] if len(available_classes) > 5 else available_classes
-        selected_classes_trend = st.multiselect(
-            "Выберите классы для сравнения:",
-            options=available_classes,
-            default=default_classes,
-            max_selections=8
-        )
-        
-        if selected_classes_trend:
-            df_classes = df_trends[df_trends['Class'].isin(selected_classes_trend)]
-            df_classes['Period'] = df_classes['Date'].dt.to_period(freq).dt.to_timestamp()
-            
-            trend_by_class = df_classes.groupby(['Period', 'Class'])['Average'].mean().reset_index()
-            trend_by_class['Average'] = trend_by_class['Average'].round(1)
-            
-            if PLOTLY_AVAILABLE and len(trend_by_class) > 0:
-                fig = create_plotly_chart(
-                    'line',
-                    trend_by_class,
-                    x='Period',
-                    y='Average',
-                    color='Class',
-                    markers=True,
-                    labels={'Average': 'Средний балл', 'Period': 'Период', 'Class': 'Класс'}
-                )
-                if fig:
-                    fig.update_layout(
-                        title=f'Динамика по классам (группировка по {freq_label})',
-                        height=500,
-                        hovermode='x unified'
-                    )
-                    st.plotly_chart(fig, width="stretch")
-    
-    else:  # По параллелям
-        df_trends['Parallel'] = df_trends['Class'].apply(extract_parallel_from_class)
-        df_trends['Period'] = df_trends['Date'].dt.to_period(freq).dt.to_timestamp()
-        
-        trend_by_parallel = df_trends.groupby(['Period', 'Parallel'])['Average'].mean().reset_index()
-        trend_by_parallel['Average'] = trend_by_parallel['Average'].round(1)
-        
-        # Сортируем параллели по числовому значению
-        trend_by_parallel['Parallel_num'] = trend_by_parallel['Parallel'].apply(
-            lambda x: int(x) if x.isdigit() else 999
-        )
-        trend_by_parallel = trend_by_parallel.sort_values(['Period', 'Parallel_num'])
-        
-        if PLOTLY_AVAILABLE and len(trend_by_parallel) > 0:
-            fig = create_plotly_chart(
-                'line',
-                trend_by_parallel,
-                x='Period',
-                y='Average',
-                color='Parallel',
-                markers=True,
-                labels={'Average': 'Средний балл', 'Period': 'Период', 'Parallel': 'Параллель'}
-            )
-            if fig:
-                fig.update_layout(
-                    title=f'Динамика по параллелям (группировка по {freq_label})',
-                    height=500,
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig, width="stretch")
-
-
-def create_heatmap_calendar(filtered_df):
-    """Создает тепловую карту по дням/неделям"""
-    if 'Date' not in filtered_df.columns or filtered_df.empty:
-        return
-    
-    st.subheader("🗓️ Тепловая карта активности")
-    
-    df_heat = filtered_df.copy()
-    df_heat['Date'] = pd.to_datetime(df_heat['Date'])
-    df_heat['DayOfWeek'] = df_heat['Date'].dt.day_name()
-    df_heat['Week'] = df_heat['Date'].dt.isocalendar().week
-    
-    # Агрегация по дню недели и неделе
-    heat_data = df_heat.groupby(['Week', 'DayOfWeek'])['Average'].mean().reset_index()
-    heat_pivot = heat_data.pivot(index='DayOfWeek', columns='Week', values='Average')
-    
-    # Сортируем дни недели
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    heat_pivot = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
-    
-    if PLOTLY_AVAILABLE and not heat_pivot.empty:
-        fig = px.imshow(
-            heat_pivot.values,
-            x=heat_pivot.columns.tolist(),
-            y=heat_pivot.index.tolist(),
-            color_continuous_scale='RdYlGn',
-            labels={'x': 'Неделя', 'y': 'День недели', 'color': 'Ср. балл'},
-            aspect='auto'
-        )
-        fig.update_layout(
-            title='Средний балл по дням недели и неделям года',
-            height=300
-        )
-        st.plotly_chart(fig, width="stretch")
+    return filtered_df
 
 
 def main():
-    st.title("📊 Дашборд успеваемости школы")
-    st.markdown("*Интерактивная аналитика с фильтрами по датам, параллелям и анализом трендов*")
+    st.title("📊 Дашборд успеваемости учеников")
     st.markdown("---")
     
-    # Загрузка данных из Excel
+    # Загружаем данные
     df = load_data()
     
-    if df is None or len(df) == 0:
-        st.error("Не удалось загрузить данные")
+    if df.empty:
+        st.error("❌ Данные не загружены!")
         return
     
-    # Отображение фильтров и получение выбранных значений
-    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, date_range = render_filter_sidebar(df)
+    # Отображаем боковую панель и получаем фильтры
+    selected_classes, selected_subjects, grade_range, date_range, top_n = render_filter_sidebar(df)
     
-    # Применение фильтров
+    # Применяем фильтры
     filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range, date_range)
     
-    # Отображение сводки фильтров
-    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels, date_range)
-    
-    # Основная статистика
-    if len(filtered_df) > 0:
-        col1, col2, col3, col4 = st.columns(4)
+    if not filtered_df.empty:
+        # === ОСНОВНЫЕ МЕТРИКИ ===
+        st.header("📈 Ключевые метрики")
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            st.metric(
-                label="👥 Студентов",
-                value=filtered_df['Student'].nunique(),
-                delta=f"{filtered_df['Student'].nunique() - df['Student'].nunique():+d}"
-            )
-        
+            st.metric("📚 Всего записей", f"{len(filtered_df):,}")
         with col2:
-            st.metric(
-                label="🏫 Классов",
-                value=filtered_df['Class'].nunique(),
-                delta=f"{filtered_df['Class'].nunique() - df['Class'].nunique():+d}"
-            )
-        
+            st.metric("🎓 Средний балл", f"{filtered_df['Average'].mean():.1f}")
         with col3:
-            st.metric(
-                label="📚 Предметов",
-                value=filtered_df['Subject'].nunique(),
-                delta=f"{filtered_df['Subject'].nunique() - df['Subject'].nunique():+d}"
-            )
-        
+            st.metric("📊 Медиана", f"{filtered_df['Average'].median():.1f}")
         with col4:
-            avg_score = filtered_df['Average'].mean()
-            total_avg = df['Average'].mean()
-            delta = avg_score - total_avg
-            st.metric(
-                label="📈 Средний балл",
-                value=f"{avg_score:.1f}",
-                delta=f"{delta:+.1f}"
-            )
+            st.metric("👥 Уникальных учеников", f"{filtered_df['Student'].nunique():,}")
+        with col5:
+            st.metric("📖 Уникальных предметов", f"{filtered_df['Subject'].nunique():,}")
         
         st.markdown("---")
         
-        # === НОВЫЙ РАЗДЕЛ: ТРЕНДЫ ===
-        create_trend_charts(filtered_df)
-        
-        st.markdown("---")
-        
-        # Рейтинг предметов (лучшие и худшие)
-        subject_avg = create_subject_ranking_charts(filtered_df, top_n)
-        
-        st.markdown("---")
-        
-        # Остальные графики
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Распределение оценок
-            st.subheader("📊 Распределение оценок")
-            if PLOTLY_AVAILABLE:
-                fig_dist = create_plotly_chart(
-                    'histogram',
-                    filtered_df,
-                    x='Average',
-                    nbins=20,
-                    color_discrete_sequence=['#636EFA']
-                )
-                if fig_dist:
-                    fig_dist.add_vline(
-                        x=filtered_df['Average'].mean(),
-                        line_dash="dash",
-                        line_color="red",
-                        annotation_text=f"Среднее: {filtered_df['Average'].mean():.1f}"
-                    )
-                    st.plotly_chart(fig_dist, width="stretch")
-            else:
-                st.write("Статистика распределения:")
-                st.write(filtered_df['Average'].describe())
-        
-        with col2:
-            # Сравнение параллелей (если применен фильтр по параллелям)
-            if parallel_mode and selected_parallels and len(selected_parallels) > 1:
-                st.subheader("📢 Сравнение параллелей")
-                
-                filtered_df_with_parallel = filtered_df.copy()
-                filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
-                
-                parallel_stats = filtered_df_with_parallel.groupby('Parallel')['Average'].agg(['mean', 'count']).reset_index()
-                parallel_stats['mean'] = parallel_stats['mean'].round(1)
-                
-                if PLOTLY_AVAILABLE:
-                    fig_parallels = create_plotly_chart(
-                        'bar',
-                        parallel_stats,
-                        x='Parallel',
-                        y='mean',
-                        color='mean',
-                        color_continuous_scale='Viridis',
-                        labels={'mean': 'Средняя оценка', 'Parallel': 'Параллель'},
-                        text='mean'
-                    )
-                    if fig_parallels:
-                        fig_parallels.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                        st.plotly_chart(fig_parallels, width="stretch")
-                else:
-                    st.dataframe(parallel_stats.rename(columns={'Parallel': 'Параллель', 'mean': 'Средняя оценка'}))
-            else:
-                # Статистика по категориям оценок
-                st.subheader("📈 Категории успеваемости")
-                
-                bins = [0, 40, 65, 85, 100]
-                labels = ['Неуд. (0-39)', 'Удовл. (40-64)', 'Хорошо (65-84)', 'Отлично (85-100)']
-                filtered_df_copy = filtered_df.copy()
-                filtered_df_copy['Grade_Category'] = pd.cut(filtered_df_copy['Average'], bins=bins, labels=labels, include_lowest=True)
-                
-                category_counts = filtered_df_copy['Grade_Category'].value_counts()
-                
-                if PLOTLY_AVAILABLE and len(category_counts) > 0:
-                    fig_pie = go.Figure(data=[go.Pie(
-                        labels=category_counts.index,
-                        values=category_counts.values,
-                        hole=0.3,
-                        marker_colors=['#ff4444', '#ff8800', '#88dd00', '#44dd44']
-                    )])
-                    fig_pie.update_layout(height=400)
-                    st.plotly_chart(fig_pie, width="stretch")
-                else:
-                    st.dataframe(category_counts.reset_index().rename(columns={'index': 'Категория', 'Grade_Category': 'Количество'}))
-        
-        # Сравнение классов
-        if len(filtered_df['Class'].unique()) > 1:
-            st.subheader("🏫 Анализ по классам")
+        # Детальная таблица с EXCEL-ПОДОБНЫМИ ФИЛЬТРАМИ
+        with st.expander("📋 Детальные данные и экспорт", expanded=True):
+            st.markdown("### 🔍 Excel-подобные фильтры")
             
-            class_avg = filtered_df.groupby('Class')['Average'].agg(['mean', 'count']).reset_index()
-            class_avg['mean'] = class_avg['mean'].round(1)
-            class_avg = class_avg.sort_values('mean', ascending=False)
+            # Создаем колонки для фильтров
+            filter_cols = st.columns(4)
             
-            col1, col2 = st.columns(2)
+            with filter_cols[0]:
+                with st.popover("🎓 Фильтр: Студент"):
+                    render_excel_like_filter('Student', filtered_df, 'Student')
             
-            with col1:
-                st.write("**🏆 Лучшие классы:**")
-                top_classes = class_avg.head(5)
-                for idx, row in top_classes.iterrows():
-                    st.write(f"• {row['Class']}: {row['mean']:.1f} ({row['count']} оценок)")
+            with filter_cols[1]:
+                with st.popover("📚 Фильтр: Класс"):
+                    render_excel_like_filter('Class', filtered_df, 'Class')
             
-            with col2:
-                st.write("**⚠️ Классы для внимания:**")
-                bottom_classes = class_avg.tail(5)
-                for idx, row in bottom_classes.iterrows():
-                    st.write(f"• {row['Class']}: {row['mean']:.1f} ({row['count']} оценок)")
+            with filter_cols[2]:
+                with st.popover("📖 Фильтр: Предмет"):
+                    render_excel_like_filter('Subject', filtered_df, 'Subject')
             
-            if PLOTLY_AVAILABLE and len(class_avg) > 0:
-                fig_classes = create_plotly_chart(
-                    'scatter',
-                    class_avg,
-                    x='Class',
-                    y='mean',
-                    size='count',
-                    color='mean',
-                    color_continuous_scale='RdYlGn',
-                    labels={'mean': 'Средняя оценка', 'count': 'Количество оценок'},
-                    hover_data=['count'],
-                    title="Успеваемость по классам"
-                )
-                if fig_classes:
-                    fig_classes.update_layout(height=400)
-                    st.plotly_chart(fig_classes, width="stretch")
-        
-        # Box plot анализ
-        if len(filtered_df) > 50:
-            st.subheader("📈 Детальный анализ распределения")
+            with filter_cols[3]:
+                with st.popover("📅 Фильтр: Дата"):
+                    render_excel_like_filter('Date', filtered_df, 'Date')
             
-            analysis_type = st.radio(
-                "Выберите тип анализа:",
-                ["По классам", "По предметам", "По параллелям"] if parallel_mode and len(selected_parallels) > 1 else ["По классам", "По предметам"],
-                horizontal=True
-            )
+            # Применяем фильтры таблицы
+            table_filtered_df = apply_table_filters(filtered_df)
             
-            if PLOTLY_AVAILABLE:
-                if analysis_type == "По классам":
-                    top_classes_for_box = filtered_df.groupby('Class')['Average'].count().nlargest(15).index
-                    df_for_box = filtered_df[filtered_df['Class'].isin(top_classes_for_box)]
-                    
-                    fig_box = create_plotly_chart(
-                        'box',
-                        df_for_box,
-                        x='Class',
-                        y='Average',
-                        labels={'Average': 'Оценка', 'Class': 'Класс'}
-                    )
-                elif analysis_type == "По предметам":
-                    top_subjects_for_box = filtered_df.groupby('Subject')['Average'].count().nlargest(12).index
-                    df_for_box = filtered_df[filtered_df['Subject'].isin(top_subjects_for_box)]
-                    
-                    fig_box = create_plotly_chart(
-                        'box',
-                        df_for_box,
-                        x='Subject',
-                        y='Average',
-                        labels={'Average': 'Оценка', 'Subject': 'Предмет'}
-                    )
-                else:
-                    filtered_df_with_parallel = filtered_df.copy()
-                    filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
-                    
-                    fig_box = create_plotly_chart(
-                        'box',
-                        filtered_df_with_parallel,
-                        x='Parallel',
-                        y='Average',
-                        labels={'Average': 'Оценка', 'Parallel': 'Параллель'}
-                    )
-                
-                if fig_box:
-                    fig_box.update_layout(height=450)
-                    fig_box.update_xaxes(tickangle=-45)
-                    st.plotly_chart(fig_box, width="stretch")
-            else:
-                if analysis_type == "По классам":
-                    box_stats = filtered_df.groupby('Class')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
-                elif analysis_type == "По предметам":
-                    box_stats = filtered_df.groupby('Subject')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
-                else:
-                    filtered_df_with_parallel = filtered_df.copy()
-                    filtered_df_with_parallel['Parallel'] = filtered_df_with_parallel['Class'].apply(extract_parallel_from_class)
-                    box_stats = filtered_df_with_parallel.groupby('Parallel')['Average'].agg(['min', 'max', 'mean', 'median']).round(1)
-                
-                st.dataframe(box_stats, width="stretch")
-        
-        # Детальная таблица с улучшенными опциями
-        with st.expander("📋 Детальные данные и экспорт"):
+            st.markdown("---")
+            
+            # Опции сортировки и отображения
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
@@ -1228,7 +789,7 @@ def main():
                     help="Оставьте пустым для отключения фильтра"
                 )
             
-            display_filtered_df = apply_manual_grade_filter(filtered_df, manual_min_grade, manual_max_grade)
+            display_filtered_df = apply_manual_grade_filter(table_filtered_df, manual_min_grade, manual_max_grade)
             
             ascending = sort_order == "По возрастанию"
             sorted_df = display_filtered_df.sort_values(sort_by, ascending=ascending)
@@ -1253,19 +814,27 @@ def main():
                 with col5:
                     st.metric("Диапазон", f"{display_df['Average'].min():.1f} - {display_df['Average'].max():.1f}")
                 
-                if manual_min_grade is not None or manual_max_grade is not None:
+                # Информация о применённых фильтрах
+                active_filters = []
+                for col, vals in st.session_state.table_filters.items():
+                    if vals:
+                        active_filters.append(f"{col}: {len(vals)} выбрано")
+                
+                if active_filters or manual_min_grade is not None or manual_max_grade is not None:
                     filter_info = []
+                    if active_filters:
+                        filter_info.append("Excel-фильтры: " + ", ".join(active_filters))
                     if manual_min_grade is not None:
-                        filter_info.append(f"≥ {manual_min_grade}")
+                        filter_info.append(f"Оценка ≥ {manual_min_grade}")
                     if manual_max_grade is not None:
-                        filter_info.append(f"≤ {manual_max_grade}")
+                        filter_info.append(f"Оценка ≤ {manual_max_grade}")
                     
-                    st.info(f"🎯 Применен дополнительный фильтр оценок: {' и '.join(filter_info)}. "
-                           f"Отфильтровано {len(display_filtered_df)} из {len(filtered_df)} записей.")
+                    st.info(f"🎯 Применены фильтры: {' | '.join(filter_info)}. "
+                           f"Показано {len(display_filtered_df)} из {len(filtered_df)} записей.")
             
             st.dataframe(
                 display_df,
-                width="stretch",
+                use_container_width=True,
                 height=400
             )
             
@@ -1292,8 +861,9 @@ def main():
                 )
             
             with col3:
-                if 'subject_avg' in locals():
-                    subject_ranking = subject_avg[['Subject', 'mean', 'count']].round(2)
+                if len(display_filtered_df) > 0:
+                    subject_avg = display_filtered_df.groupby('Subject')['Average'].agg(['mean', 'count']).round(2)
+                    subject_ranking = subject_avg.reset_index()
                     subject_ranking.columns = ['Предмет', 'Средняя_оценка', 'Количество_оценок']
                     st.download_button(
                         label="🏆 Рейтинг предметов (CSV)",
