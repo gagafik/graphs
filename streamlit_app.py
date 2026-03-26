@@ -108,6 +108,7 @@ if 'current_filters' not in st.session_state:
         "parallel_mode": False,
         "parallels": [],
         "subjects": [],
+        "dates": [],
         "grade_range": [0, 100],
         "top_n": 10
     }
@@ -367,6 +368,23 @@ def render_filter_sidebar(df):
         )
         selected_parallels = []
 
+    # --- Фильтр по датам ---
+    if 'Date' in df.columns:
+        available_dates = sorted(df['Date'].dropna().unique())
+        date_labels = [pd.Timestamp(d).strftime('%d.%m.%Y') for d in available_dates]
+        date_map = dict(zip(date_labels, available_dates))
+
+        selected_date_labels = st.sidebar.multiselect(
+            "📅 Контрольные точки (даты):",
+            options=date_labels,
+            default=current_filters.get('dates', []),
+            help="Оставьте пустым для выбора всех дат"
+        )
+        selected_dates = [date_map[l] for l in selected_date_labels]
+    else:
+        selected_date_labels = []
+        selected_dates = []
+
     all_subjects = sorted(df['Subject'].unique().tolist())
     selected_subjects = st.sidebar.multiselect(
         "📖 Выберите предметы:",
@@ -403,6 +421,7 @@ def render_filter_sidebar(df):
         'parallel_mode': parallel_mode,
         'parallels': selected_parallels,
         'subjects': selected_subjects,
+        'dates': selected_date_labels,
         'grade_range': list(grade_range),
         'top_n': top_n
     }
@@ -413,6 +432,7 @@ def render_filter_sidebar(df):
             'parallel_mode': False,
             'parallels': [],
             'subjects': [],
+            'dates': [],
             'grade_range': [min_possible, max_possible],
             'top_n': 10
         }
@@ -465,10 +485,10 @@ def render_filter_sidebar(df):
         • Используйте вкладку «Профиль ученика»
         """)
 
-    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels
+    return selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, selected_dates
 
 
-def apply_filters(df, selected_classes, selected_subjects, grade_range):
+def apply_filters(df, selected_classes, selected_subjects, grade_range, selected_dates=None):
     """Применяет фильтры к данным"""
     filtered_df = df.copy()
 
@@ -478,6 +498,9 @@ def apply_filters(df, selected_classes, selected_subjects, grade_range):
     if selected_subjects:
         filtered_df = filtered_df[filtered_df['Subject'].isin(selected_subjects)]
 
+    if selected_dates and 'Date' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Date'].isin(selected_dates)]
+
     filtered_df = filtered_df[
         (filtered_df['Average'] >= grade_range[0]) &
         (filtered_df['Average'] <= grade_range[1])
@@ -486,10 +509,10 @@ def apply_filters(df, selected_classes, selected_subjects, grade_range):
     return filtered_df
 
 
-def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels):
+def render_filter_summary(selected_classes, selected_subjects, grade_range, original_df, filtered_df, parallel_mode, selected_parallels, selected_dates=None):
     """Отображает сводку примененных фильтров"""
     with st.expander("🔍 Примененные фильтры", expanded=False):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             if parallel_mode and selected_parallels:
@@ -516,6 +539,14 @@ def render_filter_summary(selected_classes, selected_subjects, grade_range, orig
                 st.write("• Все предметы")
 
         with col3:
+            st.write("**📅 Даты:**")
+            if selected_dates:
+                date_strs = [pd.Timestamp(d).strftime('%d.%m.%Y') for d in selected_dates]
+                st.write(f"• {', '.join(date_strs)}")
+            else:
+                st.write("• Все даты")
+
+        with col4:
             st.write("**📊 Диапазон оценок:**")
             st.write(f"• {grade_range[0]} – {grade_range[1]}")
 
@@ -1002,10 +1033,10 @@ def main():
         st.success("📂 Используются загруженные данные")
 
     # Фильтры
-    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels = render_filter_sidebar(df)
-    filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range)
+    selected_classes, selected_subjects, grade_range, top_n, parallel_mode, selected_parallels, selected_dates = render_filter_sidebar(df)
+    filtered_df = apply_filters(df, selected_classes, selected_subjects, grade_range, selected_dates)
 
-    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels)
+    render_filter_summary(selected_classes, selected_subjects, grade_range, df, filtered_df, parallel_mode, selected_parallels, selected_dates)
 
     if len(filtered_df) == 0:
         st.warning("⚠️ Нет данных для выбранных фильтров!")
