@@ -638,9 +638,13 @@ def render_heatmap(filtered_df):
         st.dataframe(pivot, use_container_width=True)
 
 
-def render_student_profile(df):
+def render_student_profile(df, selected_dates=None):
     """Отображает профиль ученика с поиском"""
     st.subheader("🔍 Профиль ученика")
+
+    # Применяем фильтр по датам из сайдбара
+    if selected_dates and 'Date' in df.columns:
+        df = df[df['Date'].isin(selected_dates)].copy()
 
     # Фильтр по классу прямо в профиле
     all_classes = sorted(df['Class'].unique().tolist())
@@ -1067,7 +1071,7 @@ def main():
         render_heatmap(filtered_df)
 
     with tab_student:
-        render_student_profile(df)
+        render_student_profile(df, selected_dates)
 
     # Статистика в сайдбаре
     with st.sidebar:
