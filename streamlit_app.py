@@ -611,12 +611,31 @@ def render_student_profile(df):
     """Отображает профиль ученика с поиском"""
     st.subheader("🔍 Профиль ученика")
 
-    all_students = sorted(df['Student'].unique().tolist())
+    # Фильтр по классу прямо в профиле
+    all_classes = sorted(df['Class'].unique().tolist())
+    filter_col1, filter_col2 = st.columns([1, 2])
 
-    search_query = st.text_input(
-        "Поиск ученика:",
-        placeholder="Начните вводить имя..."
-    )
+    with filter_col1:
+        class_filter = st.selectbox(
+            "Фильтр по классу:",
+            options=["Все классы"] + all_classes,
+            index=0,
+            key="profile_class_filter"
+        )
+
+    # Фильтруем студентов по выбранному классу
+    if class_filter != "Все классы":
+        filtered_df = df[df['Class'] == class_filter]
+    else:
+        filtered_df = df
+
+    all_students = sorted(filtered_df['Student'].unique().tolist())
+
+    with filter_col2:
+        search_query = st.text_input(
+            "Поиск ученика:",
+            placeholder="Начните вводить имя..."
+        )
 
     if search_query:
         matched = [s for s in all_students if search_query.lower() in s.lower()]
@@ -624,7 +643,7 @@ def render_student_profile(df):
         matched = all_students
 
     if not matched:
-        st.warning("Ученик не найден.")
+        st.warning("Ученик не найден." if class_filter == "Все классы" else f"В классе {class_filter} учеников не найдено.")
         return
 
     selected_student = st.selectbox(
