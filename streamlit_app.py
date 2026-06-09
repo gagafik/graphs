@@ -117,34 +117,64 @@ if 'uploaded_df' not in st.session_state:
     st.session_state.uploaded_df = None
 
 
+DATA_SHEET_NAME = 'Average year, no teacher'
+
+# Допустимый диапазон корректной оценки. Значения вне него считаются выбросами.
+VALID_GRADE_MIN = 0
+VALID_GRADE_MAX = 100
+
+POSSIBLE_DATA_FILES = [
+    'Marks 2526.xlsx',
+    'marks_2526.xlsx',
+    'data/Marks 2526.xlsx',
+    'data/marks_2526.xlsx'
+]
+
+
+def find_data_file():
+    """Возвращает путь к первому существующему файлу с данными или None"""
+    for file_path in POSSIBLE_DATA_FILES:
+        if os.path.exists(file_path):
+            return file_path
+    return None
+
+
 @st.cache_data
+def read_excel_cached(file_path, file_mtime):
+    """Читает Excel. file_mtime входит в ключ кэша → данные обновляются при изменении файла"""
+    return pd.read_excel(file_path, sheet_name=DATA_SHEET_NAME)
+
+
 def load_data_from_file():
     """Загружает данные из файла на диске"""
-    possible_files = [
-        'Marks 2526.xlsx',
-        'marks_2526.xlsx',
-        'data/Marks 2526.xlsx',
-        'data/marks_2526.xlsx'
-    ]
+    file_path = find_data_file()
+    if file_path is None:
+        return None
 
-    for file_path in possible_files:
-        try:
-            df = pd.read_excel(file_path, sheet_name='Average year, no teacher')
-            return df
-        except (FileNotFoundError, ValueError):
-            continue
+    try:
+        return read_excel_cached(file_path, os.path.getmtime(file_path))
+    except (FileNotFoundError, ValueError):
+        return None
 
-    return None
+
+def clean_data(df):
+    """Приводит Average к числу и убирает строки без оценки"""
+    if df is None:
+        return None
+    df = df.copy()
+    df['Average'] = pd.to_numeric(df['Average'], errors='coerce')
+    df = df.dropna(subset=['Average'])
+    return df
 
 
 def load_data():
     """Загружает данные: из загруженного файла или с диска"""
     if st.session_state.uploaded_df is not None:
-        return st.session_state.uploaded_df
+        return clean_data(st.session_state.uploaded_df)
 
     df = load_data_from_file()
     if df is not None:
-        return df
+        return clean_data(df)
 
     st.warning("⚠️ Файл Excel не найден. Используются демо-данные.")
     return create_demo_data()
@@ -266,15 +296,39 @@ def export_presets():
     return json.dumps(st.session_state.filter_presets, indent=2, ensure_ascii=False)
 
 
+def is_valid_preset(value):
+    """Проверяет, что значение пресета имеет ожидаемую структуру"""
+    if not isinstance(value, dict):
+        return False
+    list_keys = ['classes', 'parallels', 'subjects', 'grade_range']
+    return all(isinstance(value.get(k, []), list) for k in list_keys)
+
+
 def import_presets(json_data):
     """Импортирует пресеты из JSON"""
     try:
         imported_presets = json.loads(json_data)
-        st.session_state.filter_presets.update(imported_presets)
-        save_presets_to_disk(st.session_state.filter_presets)
-        st.success(f"✅ Импортировано {len(imported_presets)} пресетов!")
     except json.JSONDecodeError:
         st.error("❌ Ошибка: неверный формат JSON!")
+        return
+
+    if not isinstance(imported_presets, dict):
+        st.error("❌ Ошибка: JSON должен быть объектом {имя: настройки}.")
+        return
+
+    valid = {name: cfg for name, cfg in imported_presets.items() if is_valid_preset(cfg)}
+    skipped = len(imported_presets) - len(valid)
+
+    if not valid:
+        st.error("❌ Не найдено корректных пресетов для импорта.")
+        return
+
+    st.session_state.filter_presets.update(valid)
+    save_presets_to_disk(st.session_state.filter_presets)
+    msg = f"✅ Импортировано {len(valid)} пресетов!"
+    if skipped:
+        msg += f" Пропущено некорректных: {skipped}."
+    st.success(msg)
 
 
 def render_filter_sidebar(df):
@@ -393,8 +447,11 @@ def render_filter_sidebar(df):
         help="Оставьте пустым для выбора всех предметов"
     )
 
-    min_possible = int(df['Average'].min())
-    max_possible = int(df['Average'].max())
+    min_possible = int(np.floor(df['Average'].min()))
+    max_possible = int(np.ceil(df['Average'].max()))
+    # st.slider падает, если min == max — раздвигаем диапазон
+    if min_possible >= max_possible:
+        max_possible = min_possible + 1
     current_range = current_filters.get('grade_range', [min_possible, max_possible])
 
     grade_range = st.sidebar.slider(
@@ -449,7 +506,11 @@ def render_filter_sidebar(df):
 
         if uploaded_file is not None:
             try:
-                df_uploaded = pd.read_excel(uploaded_file, sheet_name=0)
+                # Пробуем именованный лист (как у файла на диске), иначе первый
+                try:
+                    df_uploaded = pd.read_excel(uploaded_file, sheet_name=DATA_SHEET_NAME)
+                except ValueError:
+                    df_uploaded = pd.read_excel(uploaded_file, sheet_name=0)
                 required_cols = ['Student', 'Class', 'Subject', 'Average']
 
                 if all(col in df_uploaded.columns for col in required_cols):
@@ -1021,6 +1082,62 @@ def render_detail_table(filtered_df, subject_avg):
             )
 
 
+def get_outliers(df):
+    """Возвращает записи с оценкой вне допустимого диапазона (вероятные ошибки ввода)"""
+    return df[(df['Average'] < VALID_GRADE_MIN) | (df['Average'] > VALID_GRADE_MAX)]
+
+
+def render_outliers(df, selected_dates=None):
+    """Показывает оценки вне диапазона 0–100, чтобы найти ошибочно выставленные баллы"""
+    st.subheader("⚠️ Подозрительные оценки (выбросы)")
+    st.caption(
+        f"Записи с баллом вне диапазона {VALID_GRADE_MIN}–{VALID_GRADE_MAX}. "
+        "Скорее всего, ошибка при выставлении. Виновника видно по связке «класс + предмет»."
+    )
+
+    # Учитываем только фильтр по датам — остальные фильтры могли бы спрятать ошибки
+    if selected_dates and 'Date' in df.columns:
+        df = df[df['Date'].isin(selected_dates)]
+
+    outliers = get_outliers(df).copy()
+
+    if outliers.empty:
+        st.success("✅ Выбросов не найдено — все оценки в пределах нормы.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Всего выбросов", len(outliers))
+    with c2:
+        st.metric("Затронуто классов", outliers['Class'].nunique())
+    with c3:
+        st.metric("Затронуто предметов", outliers['Subject'].nunique())
+
+    # Сводка: где чаще всего ошибаются (класс + предмет → потенциальный учитель)
+    st.markdown("**🔎 Где искать: количество выбросов по «класс + предмет»**")
+    summary = (
+        outliers.groupby(['Class', 'Subject'])['Average']
+        .agg(['count', 'min', 'max'])
+        .reset_index()
+        .rename(columns={'count': 'Кол-во', 'min': 'Мин. балл', 'max': 'Макс. балл'})
+        .sort_values('Кол-во', ascending=False)
+    )
+    st.dataframe(summary, use_container_width=True, hide_index=True, height=240)
+
+    # Детальный список самих записей
+    st.markdown("**📋 Все подозрительные записи**")
+    cols = [c for c in ['Student', 'Class', 'Subject', 'Average', 'Date'] if c in outliers.columns]
+    detail = outliers[cols].sort_values('Average', ascending=False)
+    st.dataframe(detail, use_container_width=True, hide_index=True, height=360)
+
+    st.download_button(
+        label="📄 Скачать выбросы (CSV)",
+        data=detail.to_csv(index=False),
+        file_name=f'outliers_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+        mime='text/csv'
+    )
+
+
 def main():
     st.title("📊 Дашборд успеваемости школы")
     st.markdown("*Интерактивная аналитика с фильтрами по параллелям и рейтингом предметов*")
@@ -1047,8 +1164,12 @@ def main():
         st.info("💡 Попробуйте изменить критерии, загрузить пресет «Все данные» или расширить диапазон.")
         return
 
-    # Вкладки
-    tab_overview, tab_heatmap, tab_student = st.tabs(["📊 Обзор", "🗺️ Тепловая карта", "👤 Профиль ученика"])
+    # Вкладки (выбросы считаем по полным данным, чтобы слайдер 0–100 их не прятал)
+    n_outliers = len(get_outliers(df))
+    outliers_label = f"⚠️ Выбросы ({n_outliers})" if n_outliers else "⚠️ Выбросы"
+    tab_overview, tab_heatmap, tab_student, tab_outliers = st.tabs(
+        ["📊 Обзор", "🗺️ Тепловая карта", "👤 Профиль ученика", outliers_label]
+    )
 
     with tab_overview:
         render_overview_metrics(df, filtered_df)
@@ -1072,6 +1193,9 @@ def main():
 
     with tab_student:
         render_student_profile(df, selected_dates)
+
+    with tab_outliers:
+        render_outliers(df, selected_dates)
 
     # Статистика в сайдбаре
     with st.sidebar:
